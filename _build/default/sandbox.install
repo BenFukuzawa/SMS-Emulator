@@ -1,0 +1,36 @@
+lib: [
+  "_build/install/default/lib/sandbox/META"
+  "_build/install/default/lib/sandbox/dune-package"
+  "_build/install/default/lib/sandbox/hello/hello.ml" {"hello/hello.ml"}
+  "_build/install/default/lib/sandbox/hello/hello.mli" {"hello/hello.mli"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.a" {"hello/sandbox_hello.a"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cma" {"hello/sandbox_hello.cma"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmi" {"hello/sandbox_hello.cmi"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cms" {"hello/sandbox_hello.cms"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmsi" {"hello/sandbox_hello.cmsi"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmt" {"hello/sandbox_hello.cmt"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmti" {"hello/sandbox_hello.cmti"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmx" {"hello/sandbox_hello.cmx"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmxa" {"hello/sandbox_hello.cmxa"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.ml" {"hello/sandbox_hello.ml"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.mli" {"hello/sandbox_hello.mli"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__.cmi" {"hello/sandbox_hello__.cmi"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__.cms" {"hello/sandbox_hello__.cms"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__.cmt" {"hello/sandbox_hello__.cmt"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__.cmx" {"hello/sandbox_hello__.cmx"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__.ml" {"hello/sandbox_hello__.ml"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cmi" {"hello/sandbox_hello__Hello.cmi"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cms" {"hello/sandbox_hello__Hello.cms"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cmsi" {"hello/sandbox_hello__Hello.cmsi"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cmt" {"hello/sandbox_hello__Hello.cmt"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cmti" {"hello/sandbox_hello__Hello.cmti"}
+  "_build/install/default/lib/sandbox/hello/sandbox_hello__Hello.cmx" {"hello/sandbox_hello__Hello.cmx"}
+  "_build/install/default/lib/sandbox/opam"
+]
+libexec: [
+  "_build/install/default/lib/sandbox/hello/sandbox_hello.cmxs" {"hello/sandbox_hello.cmxs"}
+]
+doc: [
+  "_build/install/default/doc/sandbox/README.md"
+  "_build/install/default/doc/sandbox/odoc-config.sexp"
+]

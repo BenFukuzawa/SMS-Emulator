@@ -1,0 +1,40 @@
+package "hello" (
+  directory = "hello"
+  description = ""
+  requires =
+  "base
+   base_quickcheck
+   base_quickcheck.ppx_quickcheck.runtime
+   basement
+   bin_prot
+   core
+   fieldslib
+   ppx_assert.runtime-lib
+   ppx_bench.config
+   ppx_bench.runtime-lib
+   ppx_compare.runtime-lib
+   ppx_enumerate.runtime-lib
+   ppx_expect.config
+   ppx_expect.runtime
+   ppx_hash.runtime-lib
+   ppx_here.runtime-lib
+   ppx_inline_test.config
+   ppx_inline_test.runtime-lib
+   ppx_log.syntax
+   ppx_log.types
+   ppx_module_timer.runtime
+   ppx_portable.runtime
+   ppx_sexp_conv.runtime-lib
+   ppx_stable_witness.runtime
+   ppx_string.runtime
+   ppx_typed_fields.typed_fields_lib
+   ppx_typed_fields.typed_variants_lib
+   sexplib
+   sexplib0
+   typerep
+   variantslib"
+  archive(byte) = "sandbox_hello.cma"
+  archive(native) = "sandbox_hello.cmxa"
+  plugin(byte) = "sandbox_hello.cma"
+  plugin(native) = "sandbox_hello.cmxs"
+)
