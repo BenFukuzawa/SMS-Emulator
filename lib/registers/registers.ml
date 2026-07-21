@@ -120,57 +120,91 @@ let write_rr t rr x =
   | BC -> t.b <- high; t.c <- low
   | DE -> t.d <- high; t.e <- low
   | HL -> t.h <- high; t.l <- low
+  | IX -> t.ix <- x
+  | IY -> t.iy <- x
+  | SP -> t.iy <- x
 
 let read_flag t flag =
   let f = t.f |> Uint8.to_int in
   match flag with
-  | Carry       -> f land 0b00010000 <> 0
-  | Half_carry  -> f land 0b00100000 <> 0
-  | Subtraction -> f land 0b01000000 <> 0
-  | Zero        -> f land 0b10000000 <> 0
+  | Carry            -> f land 0b00000001 <> 0
+  | Subtraction      -> f land 0b00000010 <> 0
+  | Parity_overflow  -> f land 0b00000100 <> 0
+  | Flag_x           -> f land 0b00001000 <> 0
+  | Half_carry       -> f land 0b00010000 <> 0
+  | Flag_y           -> f land 0b00100000 <> 0
+  | Zero             -> f land 0b01000000 <> 0
+  | Sign             -> f land 0b10000000 <> 0
 
 (* Precompute uint8 masks to reduce calls to Uint8.of_int.
  * Improves performance of whole emulator by ~1% *)
+
+let mask_0b00000001 = Uint8.of_int 0b00000001
+let mask_0b11111110 = Uint8.of_int 0b11111110
+
+let mask_0b00000010 = Uint8.of_int 0b00000010
+let mask_0b11111101 = Uint8.of_int 0b11111101
+
+let mask_0b00000100 = Uint8.of_int 0b00000100
+let mask_0b11111011 = Uint8.of_int 0b11111011
+
+let mask_0b00001000 = Uint8.of_int 0b00001000
+let mask_0b11110111 = Uint8.of_int 0b11110111
+
 let mask_0b00010000 = Uint8.of_int 0b00010000
-let mask_0b11100000 = Uint8.of_int 0b11100000
-let mask_0b00100000 = Uint8.of_int 0b00100000
-let mask_0b11010000 = Uint8.of_int 0b11010000
-let mask_0b01000000 = Uint8.of_int 0b01000000
-let mask_0b10110000 = Uint8.of_int 0b10110000
-let mask_0b10000000 = Uint8.of_int 0b10000000
-let mask_0b01110000 = Uint8.of_int 0b01110000
 let mask_0b11101111 = Uint8.of_int 0b11101111
+
+let mask_0b00100000 = Uint8.of_int 0b00100000
 let mask_0b11011111 = Uint8.of_int 0b11011111
+
+let mask_0b01000000 = Uint8.of_int 0b01000000
 let mask_0b10111111 = Uint8.of_int 0b10111111
+
+let mask_0b10000000 = Uint8.of_int 0b10000000
 let mask_0b01111111 = Uint8.of_int 0b01111111
 
 let set_flag t flag =
   let open Uint8 in
   match flag with
-  | Carry       -> t.f <- t.f lor mask_0b00010000
-  | Half_carry  -> t.f <- t.f lor mask_0b00100000
-  | Subtraction -> t.f <- t.f lor mask_0b01000000
-  | Zero        -> t.f <- t.f lor mask_0b10000000
-
+  | Carry            -> t.f <- t.f lor mask_0b00000001
+  | Subtraction      -> t.f <- t.f lor mask_0b00000010
+  | Parity_overflow  -> t.f <- t.f lor mask_0b00000100
+  | Flag_x           -> t.f <- t.f lor mask_0b00001000
+  | Half_carry       -> t.f <- t.f lor mask_0b00010000
+  | Flag_y           -> t.f <- t.f lor mask_0b00100000
+  | Zero             -> t.f <- t.f lor mask_0b01000000
+  | Sign             -> t.f <- t.f lor mask_0b10000000
 let set_flags t
     ?(c = read_flag t Carry)
-    ?(h = read_flag t Half_carry)
     ?(n = read_flag t Subtraction)
+    ?(p = read_flag t Parity_overflow)
+    ?(y = read_flag t Flag_y)
+    ?(h = read_flag t Half_carry)
+    ?(x = read_flat t Flag_x)
     ?(z = read_flag t Zero)
+    ?(s = read_flag t Sign)
     () =
   let open Uint8 in
-  if c then t.f <- t.f lor mask_0b00010000 else t.f <- t.f land mask_0b11100000;
-  if h then t.f <- t.f lor mask_0b00100000 else t.f <- t.f land mask_0b11010000;
-  if n then t.f <- t.f lor mask_0b01000000 else t.f <- t.f land mask_0b10110000;
-  if z then t.f <- t.f lor mask_0b10000000 else t.f <- t.f land mask_0b01110000
+  if c then t.f <- t.f lor mask_0b00000001 else t.f <- t.f land mask_0b11111110;
+  if n then t.f <- t.f lor mask_0b00000010 else t.f <- t.f land mask_0b11111101;
+  if p then t.f <- t.f lor mask_0b00000100 else t.f <- t.f land mask_0b11111011;
+  if y then t.f <- t.f lor mask_0b00001000 else t.f <- t.f land mask_0b11110111;
+  if h then t.f <- t.f lor mask_0b00010000 else t.f <- t.f land mask_0b11101111;
+  if x then t.f <- t.f lor mask_0b00100000 else t.f <- t.f land mask_0b11011111;
+  if z then t.f <- t.f lor mask_0b01000000 else t.f <- t.f land mask_0b10111111;
+  if s then t.f <- t.f lor mask_0b10000000 else t.f <- t.f land mask_0b01111111;
 
 let unset_flag t flag =
   let open Uint8 in
   match flag with
-  | Carry       -> t.f <- t.f land mask_0b11101111
-  | Half_carry  -> t.f <- t.f land mask_0b11011111
-  | Subtraction -> t.f <- t.f land mask_0b10111111
-  | Zero        -> t.f <- t.f land mask_0b01111111
+  | Carry            -> t.f <- t.f land mask_0b11111110
+  | Subtraction      -> t.f <- t.f land mask_0b11111101
+  | Parity_overflow  -> t.f <- t.f land mask_0b11111011
+  | Flag_x           -> t.f <- t.f land mask_0b11110111
+  | Half_carry       -> t.f <- t.f land mask_0b11101111
+  | Flag_y           -> t.f <- t.f land mask_0b11011111
+  | Zero             -> t.f <- t.f land mask_0b10111111
+  | Sign             -> t.f <- t.f land mask_0b01111111
 
 let clear_flags t = t.f <- Uint8.zero
 
@@ -180,29 +214,38 @@ let show_r = function
   | C -> "C"
   | D -> "D"
   | E -> "E"
-  | F -> "F"
   | H -> "H"
   | L -> "L"
 
 let show_rr = function
   | AF -> "AF"
-  | BC -> "BC"
+  | BC-> "BC"
   | DE -> "DE"
   | HL -> "HL"
+  | IX -> "IX"
+  | IY -> "IY"
+  | SP -> "SP"
 
 let show_f f =
   let f = Uint8.to_int f in
-  let z = if f land 0b10000000 <> 0 then 'Z' else '-' in
-  let n = if f land 0b01000000 <> 0 then 'N' else '-' in
-  let h = if f land 0b00100000 <> 0 then 'H' else '-' in
-  let c = if f land 0b00010000 <> 0 then 'C' else '-' in
-  Printf.sprintf "%c%c%c%c" z n h c
+  let c = if f land 0b00000001 <> 0 then 'Z' else '-' in
+  let n = if f land 0b00000010 <> 0 then 'N' else '-' in
+  let p = if f land 0b00000100 <> 0 then 'P' else '-' in
+  let y = if f land 0b00001000 <> 0 then 'y' else '-' in
+  let h = if f land 0b00010000 <> 0 then 'H' else '-' in
+  let x = if f land 0b00100000 <> 0 then 'x' else '-' in
+  let z = if f land 0b01000000 <> 0 then 'Z' else '-' in
+  let s = if f land 0b10000000 <> 0 then 'S' else '-' in
+  Printf.sprintf "%c%c%c%c%c%c%c%c" f c n p y h x z s
 
-(* A:$11 F:Z-HC BC:$0013 DE:$00D8 $HL:014D  *)
 let show t =
-  Printf.sprintf "A:%s F:%s BC:%s DE:%s HL:%s"
+  Printf.sprintf
+    "A:%s F:%s BC:%s DE:%s HL:%s IX:%s IY:%s SP:%s"
     (read_r t A |> Uint8.show)
     (show_f t.f)
     (read_rr t BC |> Uint16.show)
     (read_rr t DE |> Uint16.show)
     (read_rr t HL |> Uint16.show)
+    (Uint16.show t.ix)
+    (Uint16.show t.iy)
+    (Uint16.show t.sp)
