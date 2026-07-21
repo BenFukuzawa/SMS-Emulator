@@ -10,6 +10,7 @@
 
 (package
  (name sandbox)
+ (allow_empty)
  (synopsis "A blank OCaml project in the Jane Street style")
  (depends
   (ocaml
@@ -21,5 +22,6 @@
   ocamlformat
   (odoc :with-doc)
   core
+  stdint
   ppx_jane
   (expect_test_helpers_core :with-test)))

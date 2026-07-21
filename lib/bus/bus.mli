@@ -1,5 +1,4 @@
-module Make (Cartridge : Addressable_intf.S) : sig
-
+module Make (Cartridge) : sig
   type t
 
   val create :
