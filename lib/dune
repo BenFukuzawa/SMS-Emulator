@@ -1,5 +1,7 @@
+(include_subdirs unqualified)
+
 (library
  (name sandbox)
- (libraries core)
+ (libraries async stdint core)
  (preprocess
   (pps ppx_jane)))
