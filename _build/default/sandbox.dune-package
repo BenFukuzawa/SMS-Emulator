@@ -1,4 +1,0 @@
-(lang dune 3.22)
-(name sandbox)
-(sections (lib .) (doc ../../doc/sandbox))
-(files (lib (META dune-package opam)) (doc (README.md odoc-config.sexp)))

@@ -1,9 +1,0 @@
-lib: [
-  "_build/install/default/lib/sandbox/META"
-  "_build/install/default/lib/sandbox/dune-package"
-  "_build/install/default/lib/sandbox/opam"
-]
-doc: [
-  "_build/install/default/doc/sandbox/README.md"
-  "_build/install/default/doc/sandbox/odoc-config.sexp"
-]
