@@ -1,4 +1,4 @@
-open Stdint
+open Uints
 
 module type S = sig
   type t

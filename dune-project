@@ -22,6 +22,5 @@
   ocamlformat
   (odoc :with-doc)
   core
-  stdint
   ppx_jane
   (expect_test_helpers_core :with-test)))
