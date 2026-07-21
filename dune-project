@@ -15,6 +15,8 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (wasm_of_ocaml-compiler
+   (>= 6.0.1))
   ocaml-lsp-server
   ocamlformat
   (odoc :with-doc)
