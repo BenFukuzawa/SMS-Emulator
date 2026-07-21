@@ -1,4 +1,5 @@
-open Uints
+open Stdint
+
 type t = {
   mutable a : uint8;
   mutable b : uint8;

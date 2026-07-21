@@ -1,5 +1,5 @@
 (library
  (name sandbox)
- (libraries core)
+ (libraries stdint async core)
  (preprocess
   (pps ppx_jane)))

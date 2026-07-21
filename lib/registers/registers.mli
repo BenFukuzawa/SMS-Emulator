@@ -1,4 +1,4 @@
-open Uints
+open Stdint
 (* registers.mli *)
 
 type t

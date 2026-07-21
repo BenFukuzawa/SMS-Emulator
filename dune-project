@@ -20,6 +20,8 @@
   ocaml-lsp-server
   ocamlformat
   (odoc :with-doc)
+  async
+  stdint
   core
   ppx_jane
   (expect_test_helpers_core :with-test)))
