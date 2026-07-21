@@ -22,8 +22,14 @@ type t = {
   mutable ix : uint16;
   mutable iy : uint16;
   mutable sp : uint16;
+  mutable pc : uint16;
 
-  mutable 
+  mutable i : uint8;
+  mutable r : uint8;
+
+  mutable iff1 : bool;
+  mutable iff2 : bool;
+  mutable halted : bool;
 }
 
 type r =
@@ -76,7 +82,12 @@ let create () = {
   ix = Uint16.zero;
   iy = Uint16.zero;
   sp = Uint16.zero;
-
+  pc = Uint16.zero;
+  i = Uint8.zero;
+  r = Uint8.zero;
+  iff1 = false;
+  iff2 = false;
+  halted = false;
 }
 
 let read_r t = function
@@ -109,20 +120,19 @@ let write_r t r x = match r with
   | L -> t.l <- x
 
 let write_rr t rr x =
-  let x = Uint16.to_int x in
-  let high = (x land 0xFF00) lsr 8 |> Uint8.of_int in
-  let low  =  x land 0x00FF        |> Uint8.of_int in
+  let x_int = Uint16.to_int x in
+  let high = (x_int land 0xFF00) lsr 8 |> Uint8.of_int in
+  let low  =  x_int land 0x00FF        |> Uint8.of_int in
   match rr with
   | AF ->
     t.a <- high;
-    (* Bottom 4 bits of the flag register is always zero *)
-    t.f <- Uint8.(low land of_int 0xF0)
+    t.f <- low
   | BC -> t.b <- high; t.c <- low
   | DE -> t.d <- high; t.e <- low
   | HL -> t.h <- high; t.l <- low
   | IX -> t.ix <- x
   | IY -> t.iy <- x
-  | SP -> t.iy <- x
+  | SP -> t.sp <- x
 
 let read_flag t flag =
   let f = t.f |> Uint8.to_int in
@@ -130,9 +140,9 @@ let read_flag t flag =
   | Carry            -> f land 0b00000001 <> 0
   | Subtraction      -> f land 0b00000010 <> 0
   | Parity_overflow  -> f land 0b00000100 <> 0
-  | Flag_x           -> f land 0b00001000 <> 0
+  | Flag_y           -> f land 0b00001000 <> 0
   | Half_carry       -> f land 0b00010000 <> 0
-  | Flag_y           -> f land 0b00100000 <> 0
+  | Flag_x           -> f land 0b00100000 <> 0
   | Zero             -> f land 0b01000000 <> 0
   | Sign             -> f land 0b10000000 <> 0
 
@@ -169,18 +179,19 @@ let set_flag t flag =
   | Carry            -> t.f <- t.f lor mask_0b00000001
   | Subtraction      -> t.f <- t.f lor mask_0b00000010
   | Parity_overflow  -> t.f <- t.f lor mask_0b00000100
-  | Flag_x           -> t.f <- t.f lor mask_0b00001000
+  | Flag_y          -> t.f <- t.f lor mask_0b00001000
   | Half_carry       -> t.f <- t.f lor mask_0b00010000
-  | Flag_y           -> t.f <- t.f lor mask_0b00100000
+  | Flag_x           -> t.f <- t.f lor mask_0b00100000
   | Zero             -> t.f <- t.f lor mask_0b01000000
   | Sign             -> t.f <- t.f lor mask_0b10000000
+
 let set_flags t
     ?(c = read_flag t Carry)
     ?(n = read_flag t Subtraction)
     ?(p = read_flag t Parity_overflow)
     ?(y = read_flag t Flag_y)
     ?(h = read_flag t Half_carry)
-    ?(x = read_flat t Flag_x)
+    ?(x = read_flag t Flag_x)
     ?(z = read_flag t Zero)
     ?(s = read_flag t Sign)
     () =
@@ -192,7 +203,7 @@ let set_flags t
   if h then t.f <- t.f lor mask_0b00010000 else t.f <- t.f land mask_0b11101111;
   if x then t.f <- t.f lor mask_0b00100000 else t.f <- t.f land mask_0b11011111;
   if z then t.f <- t.f lor mask_0b01000000 else t.f <- t.f land mask_0b10111111;
-  if s then t.f <- t.f lor mask_0b10000000 else t.f <- t.f land mask_0b01111111;
+  if s then t.f <- t.f lor mask_0b10000000 else t.f <- t.f land mask_0b01111111
 
 let unset_flag t flag =
   let open Uint8 in
@@ -200,9 +211,9 @@ let unset_flag t flag =
   | Carry            -> t.f <- t.f land mask_0b11111110
   | Subtraction      -> t.f <- t.f land mask_0b11111101
   | Parity_overflow  -> t.f <- t.f land mask_0b11111011
-  | Flag_x           -> t.f <- t.f land mask_0b11110111
+  | Flag_y           -> t.f <- t.f land mask_0b11110111
   | Half_carry       -> t.f <- t.f land mask_0b11101111
-  | Flag_y           -> t.f <- t.f land mask_0b11011111
+  | Flag_x           -> t.f <- t.f land mask_0b11011111
   | Zero             -> t.f <- t.f land mask_0b10111111
   | Sign             -> t.f <- t.f land mask_0b01111111
 
@@ -228,7 +239,7 @@ let show_rr = function
 
 let show_f f =
   let f = Uint8.to_int f in
-  let c = if f land 0b00000001 <> 0 then 'Z' else '-' in
+  let c = if f land 0b00000001 <> 0 then 'C' else '-' in
   let n = if f land 0b00000010 <> 0 then 'N' else '-' in
   let p = if f land 0b00000100 <> 0 then 'P' else '-' in
   let y = if f land 0b00001000 <> 0 then 'y' else '-' in
@@ -236,11 +247,11 @@ let show_f f =
   let x = if f land 0b00100000 <> 0 then 'x' else '-' in
   let z = if f land 0b01000000 <> 0 then 'Z' else '-' in
   let s = if f land 0b10000000 <> 0 then 'S' else '-' in
-  Printf.sprintf "%c%c%c%c%c%c%c%c" f c n p y h x z s
+  Printf.sprintf "%c%c%c%c%c%c%c%c" s z x h y p n c 
 
 let show t =
   Printf.sprintf
-    "A:%s F:%s BC:%s DE:%s HL:%s IX:%s IY:%s SP:%s"
+    "A:%s F:%s BC:%s DE:%s HL:%s IX:%s IY:%s SP:%s PC:%s I:%s R:%s"
     (read_r t A |> Uint8.show)
     (show_f t.f)
     (read_rr t BC |> Uint16.show)
@@ -249,3 +260,6 @@ let show t =
     (Uint16.show t.ix)
     (Uint16.show t.iy)
     (Uint16.show t.sp)
+    (Uint16.show t.pc)
+    (Uint8.show t.i)
+    (Uint8.show t.r)

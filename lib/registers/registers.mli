@@ -14,8 +14,6 @@ type rr =
   | IY
   | SP
 
-...
-
 (* read/write functions for the above registers. carry, add/subtract, parity/overflow, unused, half carry, unused, zero, sign*)
   type flag =
   | Carry
