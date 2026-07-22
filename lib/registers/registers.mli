@@ -61,3 +61,6 @@ val clear_flags : t -> unit
 val show : t -> string
 val show_r : r -> string
 val show_rr : rr -> string
+val read_pc : t -> uint16
+val write_pc : t -> uint16 -> unit
+val increment_pc : t -> uint16 -> unit

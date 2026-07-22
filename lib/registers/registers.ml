@@ -290,3 +290,7 @@ let show t =
     (Uint8.show t.i)
     (Uint8.show t.r)
 ;;
+
+let read_pc t = t.pc
+let write_pc t pc = t.pc <- pc
+let increment_pc t amount = t.pc <- Uint16.(t.pc + amount)
