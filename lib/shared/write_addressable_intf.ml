@@ -7,6 +7,6 @@ module type S = sig
 
   include Addressable_intf.S with type t := t
 
-  val read_16_byte : t -> uint16 -> uint8
-  val write_16_byte : t -> addr:uint16 -> data:uint8 -> unit
+  val read_word : t -> uint16 -> uint8
+  val write_word : t -> addr:uint16 -> data:uint8 -> unit
 end
