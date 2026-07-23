@@ -36,6 +36,10 @@ type r =
   | E
   | H
   | L
+  | IXH
+  | IXL
+  | IYH
+  | IYL
 
 type rr =
   | AF
@@ -95,6 +99,10 @@ let read_r t = function
   | E -> t.e
   | H -> t.h
   | L -> t.l
+  | IXH -> Uint16.to_int t.ix lsr 8 |> Uint8.of_int
+  | IXL -> Uint16.to_int t.ix land 0xFF |> Uint8.of_int
+  | IYH -> Uint16.to_int t.iy lsr 8 |> Uint8.of_int
+  | IYL -> Uint16.to_int t.iy land 0xFF |> Uint8.of_int
 ;;
 
 let read_rr t rr =
@@ -118,6 +126,18 @@ let write_r t r x =
   | E -> t.e <- x
   | H -> t.h <- x
   | L -> t.l <- x
+  | IXH ->
+    let low = Uint16.to_int t.ix land 0x00FF in
+    t.ix <- Uint16.of_int ((Uint8.to_int x lsl 8) lor low)
+  | IXL ->
+    let high = Uint16.to_int t.ix land 0xFF00 in
+    t.ix <- Uint16.of_int (high lor Uint8.to_int x)
+  | IYH ->
+    let low = Uint16.to_int t.iy land 0x00FF in
+    t.iy <- Uint16.of_int ((Uint8.to_int x lsl 8) lor low)
+  | IYL ->
+    let high = Uint16.to_int t.iy land 0xFF00 in
+    t.iy <- Uint16.of_int (high lor Uint8.to_int x)
 ;;
 
 let write_rr t rr x =
@@ -148,9 +168,9 @@ let read_flag t flag =
   | Carry -> f land 0b00000001 <> 0
   | Subtraction -> f land 0b00000010 <> 0
   | Parity_overflow -> f land 0b00000100 <> 0
-  | Flag_y -> f land 0b00001000 <> 0
+  | Flag_x -> f land 0b00001000 <> 0
   | Half_carry -> f land 0b00010000 <> 0
-  | Flag_x -> f land 0b00100000 <> 0
+  | Flag_y -> f land 0b00100000 <> 0
   | Zero -> f land 0b01000000 <> 0
   | Sign -> f land 0b10000000 <> 0
 ;;
@@ -181,9 +201,9 @@ let set_flag t flag =
   | Carry -> t.f <- t.f lor mask_0b00000001
   | Subtraction -> t.f <- t.f lor mask_0b00000010
   | Parity_overflow -> t.f <- t.f lor mask_0b00000100
-  | Flag_y -> t.f <- t.f lor mask_0b00001000
+  | Flag_x -> t.f <- t.f lor mask_0b00001000
   | Half_carry -> t.f <- t.f lor mask_0b00010000
-  | Flag_x -> t.f <- t.f lor mask_0b00100000
+  | Flag_y -> t.f <- t.f lor mask_0b00100000
   | Zero -> t.f <- t.f lor mask_0b01000000
   | Sign -> t.f <- t.f lor mask_0b10000000
 ;;
@@ -211,14 +231,14 @@ let set_flags
   then t.f <- t.f lor mask_0b00000100
   else t.f <- t.f land mask_0b11111011;
   if y
-  then t.f <- t.f lor mask_0b00001000
-  else t.f <- t.f land mask_0b11110111;
+  then t.f <- t.f lor mask_0b00100000
+  else t.f <- t.f land mask_0b11011111;
   if h
   then t.f <- t.f lor mask_0b00010000
   else t.f <- t.f land mask_0b11101111;
   if x
-  then t.f <- t.f lor mask_0b00100000
-  else t.f <- t.f land mask_0b11011111;
+  then t.f <- t.f lor mask_0b00001000
+  else t.f <- t.f land mask_0b11110111;
   if z
   then t.f <- t.f lor mask_0b01000000
   else t.f <- t.f land mask_0b10111111;
@@ -233,9 +253,9 @@ let unset_flag t flag =
   | Carry -> t.f <- t.f land mask_0b11111110
   | Subtraction -> t.f <- t.f land mask_0b11111101
   | Parity_overflow -> t.f <- t.f land mask_0b11111011
-  | Flag_y -> t.f <- t.f land mask_0b11110111
+  | Flag_x -> t.f <- t.f land mask_0b11110111
   | Half_carry -> t.f <- t.f land mask_0b11101111
-  | Flag_x -> t.f <- t.f land mask_0b11011111
+  | Flag_y -> t.f <- t.f land mask_0b11011111
   | Zero -> t.f <- t.f land mask_0b10111111
   | Sign -> t.f <- t.f land mask_0b01111111
 ;;
@@ -250,6 +270,10 @@ let show_r = function
   | E -> "E"
   | H -> "H"
   | L -> "L"
+  | IXL -> "IXL"
+  | IXH -> "IXH"
+  | IYL -> "IYL"
+  | IYH -> "IYH"
 ;;
 
 let show_rr = function
@@ -267,9 +291,9 @@ let show_f f =
   let c = if f land 0b00000001 <> 0 then 'C' else '-' in
   let n = if f land 0b00000010 <> 0 then 'N' else '-' in
   let p = if f land 0b00000100 <> 0 then 'P' else '-' in
-  let y = if f land 0b00001000 <> 0 then 'y' else '-' in
+  let y = if f land 0b00100000 <> 0 then 'y' else '-' in
   let h = if f land 0b00010000 <> 0 then 'H' else '-' in
-  let x = if f land 0b00100000 <> 0 then 'x' else '-' in
+  let x = if f land 0b00001000 <> 0 then 'x' else '-' in
   let z = if f land 0b01000000 <> 0 then 'Z' else '-' in
   let s = if f land 0b10000000 <> 0 then 'S' else '-' in
   Printf.sprintf "%c%c%c%c%c%c%c%c" s z x h y p n c
@@ -289,4 +313,34 @@ let show t =
     (Uint16.show t.pc)
     (Uint8.show t.i)
     (Uint8.show t.r)
+;;
+
+let exx t =
+  let b = t.b
+  and c = t.c
+  and d = t.d
+  and e = t.e
+  and h = t.h
+  and l = t.l in
+  t.b <- t.b_shadow;
+  t.c <- t.c_shadow;
+  t.d <- t.d_shadow;
+  t.e <- t.e_shadow;
+  t.h <- t.h_shadow;
+  t.l <- t.l_shadow;
+  t.b_shadow <- b;
+  t.c_shadow <- c;
+  t.d_shadow <- d;
+  t.e_shadow <- e;
+  t.h_shadow <- h;
+  t.l_shadow <- l
+;;
+
+let ex_af t =
+  let a = t.a
+  and f = t.f in
+  t.a <- t.a_shadow;
+  t.f <- t.f_shadow;
+  t.a_shadow <- a;
+  t.f_shadow <- f
 ;;

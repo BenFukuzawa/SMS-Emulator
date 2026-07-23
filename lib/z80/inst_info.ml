@@ -7,6 +7,6 @@ type mcycles =
 
 type t =
   { len : uint16
-  ; mcycles : mcycles
+  ; tcycles : mcycles
   ; inst : Instruction.t
   }

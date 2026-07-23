@@ -12,6 +12,8 @@ type r =
   | E
   | H
   | L
+  | IXL
+  | IXY
 
 (* identifiers for the 16-bit registers *)
 type rr =
