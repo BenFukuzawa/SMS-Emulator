@@ -75,31 +75,136 @@ module Make (Bus : Word_addressable_intf.S) = struct
                     | 0 ->
                         match y with 
                             | 0-> {
-                                len = l1;
-                                tcycles = { not_branched = 1; branched = 1 };
-                                inst = NOP;
-                                }
+                                    len = l1;
+                                    tcycles =
+                                        {
+                                        taken = 4;
+                                        not_taken = 4;
+                                        };
+                                    inst = NOP;
+                                    }
                             | 1 ->
+                                {
+                                    len = l1;
+                                    tcycles =
+                                        {
+                                        taken = 4;
+                                        not_taken = 4;
+                                        };
+                                    inst = EX_AF_AF;
+                                    }
                             | 2 ->
+                                {
+                                    len = l2;
+                                    tcycles =
+                                        {
+                                        taken = 13;
+                                        not_taken = 8;
+                                        };
+                                    inst = DJNZ (Int8.of_byte (next_byte ()));
+                                    }
                             | 3->
-                            | _ ->
+                                {
+                                    len = l2;
+                                    tcycles =
+                                        {
+                                        taken = 12;
+                                        not_taken = 12;
+                                        };
+                                    inst = JR (None, Int8.of_byte (next_byte ()));
+                                    }
+                            | 4 | 5 | 6 | 7 ->
+                                {
+                                    len = l2;
+                                    tcycles =
+                                        {
+                                        taken = 12;
+                                        not_taken = 7;
+                                        };
+                                    inst =
+                                        JR
+                                        ( cc (y - 4)
+                                        , Int8.of_byte (next_byte ())
+                                        );
+                                    }
+                            | _ -> assert false
                     | 1 ->
                         match q with 
                             | 0-> 
-                            | 1->
+                                {
+                                    len = l3;
+                                    tcycles =
+                                        {
+                                        taken = 10;
+                                        not_taken = 10;
+                                        };
+                                    inst =
+                                        LD16
+                                        ( RR (rp p)
+                                        , Immediate16 (next_word ())
+                                        );
+                                    }
+                            | 1-> {
+                                    len = l1;
+                                    tcycles =
+                                        {
+                                        taken = 11;
+                                        not_taken = 11;
+                                        };
+                                    inst =
+                                        ADD16
+                                        ( RR Registers.HL
+                                        , RR (rp p)
+                                        );
+                                    }
                     | 2 ->
                         match q with 
                             | 0-> 
                                 match p with
-                                    | 0
-                                    | 1
-                                    | 2
-                                    | 3
+                                    | 0-> {
+                                        len = l1;
+                                        tcycles = { taken = 7; not_taken = 7 };
+                                        inst =
+                                        LD8
+                                            ( RR_indirect Registers.BC
+                                            , R Registers.A
+                                            );
+                                    }
+                                    | 1 ->
+                                        LD8
+                                            (
+                                                RR_indirect Registers.DE,
+                                                R Registers.A
+                                            )
+                                    | 2 -> LD16
+                                        (
+                                            Direct16 (next_word ()),
+                                            RR Registers.HL
+                                        )
+                                    | 3 -> LD8
+                                        (
+                                            Direct8 (next_word ()),
+                                            R Registers.A
+                                        )
                             | 1->
                                 match p with
-                                    | 0
-                                    | 1
-                                    | 2
+                                    | 0 -> LD8
+                                        (
+                                            R Registers.A,
+                                            RR_indirect Registers.BC
+                                        )
+                                    | 1 -> 
+                                        LD8
+                                            (
+                                                R Registers.A,
+                                                RR_indirect Registers.DE
+                                            )
+                                    | 2 -> 
+                                        LD16
+                                            (
+                                                RR Registers.HL,
+                                                Direct16 (next_word ())
+                                            )
                                     | 3
                     | 3 ->
                         match q with 

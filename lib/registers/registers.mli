@@ -12,10 +12,11 @@ type r =
   | E
   | H
   | L
+  | IXH
   | IXL
-  | IXY
+  | IYH
+  | IYL
 
-(* identifiers for the 16-bit registers *)
 type rr =
   | AF
   | BC
@@ -63,3 +64,5 @@ val clear_flags : t -> unit
 val show : t -> string
 val show_r : r -> string
 val show_rr : rr -> string
+val exx : t -> unit
+val ex_af : t -> unit

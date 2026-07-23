@@ -1,12 +1,12 @@
 open Uints
 
-type mcycles =
-  { not_branched : int
-  ; branched : int
+type tcycles =
+  { taken : int
+  ; not_taken : int
   }
 
 type t =
   { len : uint16
-  ; tcycles : mcycles
+  ; tcycles : tcycles
   ; inst : Instruction.t
   }
