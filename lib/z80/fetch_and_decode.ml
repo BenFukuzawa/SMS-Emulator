@@ -76,45 +76,45 @@ module Make (Bus : Word_addressable_intf.S) = struct
             ; tcycles = { taken = 12; not_taken = 7 }
             ; inst = JR (cc (y - 4), Int8.of_byte (next_byte ()))
             }
-          | _ -> assert false
-          | 1 ->
+          | _ -> assert false)
+        | 1 ->
             (match q with
-             | 0 ->
-               { len = l3
-               ; tcycles = { taken = 10; not_taken = 10 }
-               ; inst = LD16 (RR (rp p), Immediate16 (next_word ()))
-               }
-             | 1 ->
-               { len = l1
-               ; tcycles = { taken = 11; not_taken = 11 }
-               ; inst = ADD16 (RR Registers.HL, RR (rp p))
-               }
+                | 0 ->
+                { len = l3
+                ; tcycles = { taken = 10; not_taken = 10 }
+                ; inst = LD16 (RR (rp p), Immediate16 (next_word ()))
+                }
+                | 1 ->
+                { len = l1
+                ; tcycles = { taken = 11; not_taken = 11 }
+                ; inst = ADD16 (RR Registers.HL, RR (rp p))
+                })
              | 2 ->
                (match q with
                 | 0 ->
                   (match p with
-                   | 0 ->
-                     { len = l1
-                     ; tcycles = { taken = 7; not_taken = 7 }
-                     ; inst = LD8 (RR_indirect Registers.BC, R Registers.A)
-                     }
-                   | 1 ->
-                     { len = l1
-                     ; tcycles = { taken = 7; not_taken = 7 }
-                     ; inst = LD8 (RR_indirect Registers.DE, R Registers.A)
-                     }
-                   | 2 ->
-                     { len = l3
-                     ; tcycles = { taken = 16; not_taken = 16 }
-                     ; inst = LD16 (Direct16 (next_word ()), RR Registers.HL)
-                     }
-                   | 3 ->
-                     { len = l3
-                     ; tcycles = { taken = 13; not_taken = 13 }
-                     ; inst = LD8 (Direct8 (next_word ()), R Registers.A)
-                     }
-                   | _ -> assert false
-                   | 1 ->
+                    | 0 ->
+                        { len = l1
+                        ; tcycles = { taken = 7; not_taken = 7 }
+                        ; inst = LD8 (RR_indirect Registers.BC, R Registers.A)
+                        }
+                    | 1 ->
+                        { len = l1
+                        ; tcycles = { taken = 7; not_taken = 7 }
+                        ; inst = LD8 (RR_indirect Registers.DE, R Registers.A)
+                        }
+                    | 2 ->
+                        { len = l3
+                        ; tcycles = { taken = 16; not_taken = 16 }
+                        ; inst = LD16 (Direct16 (next_word ()), RR Registers.HL)
+                        }
+                    | 3 ->
+                        { len = l3
+                        ; tcycles = { taken = 13; not_taken = 13 }
+                        ; inst = LD8 (Direct8 (next_word ()), R Registers.A)
+                        }
+                    | _ -> assert false)
+                    | 1 ->
                      (match p with
                       | 0 ->
                         { len = l1
@@ -576,7 +576,9 @@ module Make (Bus : Word_addressable_intf.S) = struct
       | 7 -> Registers.A
       | _ -> assert false
     in
-    let rr idx : uint16 Instruction.arg = RR (rp ~prefix:No_prefix idx) in
+    let rr idx : uint16 Instruction.arg =
+      RR (Lookup.rp ~prefix:Lookup.No_prefix idx)
+    in
     match x with
     | 1 ->
       (match z with
@@ -595,7 +597,7 @@ module Make (Bus : Word_addressable_intf.S) = struct
              (if y = 6
               then OUT (Port_C, Out_zero)
               else OUT (Port_C, Out_register (register_of_y y)))
-         })
+         }
        | 2 ->
          { len = normal_len
          ; tcycles = { taken = 15; not_taken = 15 }
@@ -636,23 +638,21 @@ module Make (Bus : Word_addressable_intf.S) = struct
               | 1 -> LD_R_A
               | 2 -> LD_A_I
               | 3 -> LD_A_R
-              | 4 | 6 -> RRD
-              | 5 | 7 -> RLD
+              | 4 -> RRD
+              | 5 -> RLD
+              | 6 | 7 -> NOP
               | _ -> assert false)
          }
-       | _ -> assert false
-       | 2 ->
-         if z <= 3 && y >= 4
-         then
-           { len = normal_len
-           ; tcycles =
-               { taken = (if z >= 2 then 16 else 21)
-               ; not_taken = (if z >= 2 then 16 else 16)
-               }
-           ; inst = Lookup.bli_lookup y z
-           }
-         else assert false
        | _ -> assert false)
+    | 2 ->
+      if z <= 3 && y >= 4
+      then
+        { len = normal_len
+        ; tcycles = { taken = (if y >= 6 then 21 else 16); not_taken = 16 }
+        ; inst = Lookup.bli_lookup y z
+        }
+      else assert false
+    | _ -> assert false
   ;;
 
   let decode_ed bus ~pc : Inst_info.t =

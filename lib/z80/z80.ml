@@ -48,34 +48,7 @@ module Make (Bus : Word_addressable_intf.S) = struct
       | RR_indirect rr ->
         let addr = Registers.read_rr t.registers rr in
         Bus.read_byte t.bus addr
-      | FF00_offset n ->
-        let addr = Uint16.(of_int 0xFF00 + of_uint8 n) in
-        Bus.read_byte t.bus addr
-      | FF00_C ->
-        let c = Registers.read_r t.registers C in
-        let addr = Uint16.(of_int 0xFF00 + of_uint8 c) in
-        Bus.read_byte t.bus addr
-      | HL_inc ->
-        let addr = Registers.read_rr t.registers HL in
-        Registers.write_rr t.registers HL Uint16.(succ addr);
-        Bus.read_byte t.bus addr
-      | HL_dec ->
-        let addr = Registers.read_rr t.registers HL in
-        Registers.write_rr t.registers HL Uint16.(pred addr);
-        Bus.read_byte t.bus addr
       | Direct16 addr -> Bus.read_word t.bus addr
-      | RR rr -> Registers.read_rr t.registers rr
-      | SP -> t.sp
-      | SP_offset n ->
-        let sp = t.sp |> Uint16.to_int in
-        let n = n |> Int8.to_int in
-        set_flags
-          ~z:false
-          ~h:((sp land 0xF) + (n land 0xF) > 0xF)
-          ~n:false
-          ~c:((sp land 0xFF) + (n land 0xFF) > 0xFF)
-          ();
-        sp + n |> Uint16.of_int
     in
     let write : type a. a Instruction.arg -> a -> unit =
       fun x y ->
