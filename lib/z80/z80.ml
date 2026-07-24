@@ -35,10 +35,8 @@ module Make (Bus : Word_addressable_intf.S) = struct
 
   let execute (t : t) (inst_info : Inst_info.t) : int =
     let open Inst_info in
-    let { len = _; mcycles; inst } = inst_info in
-    let { not_branched = not_branched_mcycles; branched = branched_mcycles } =
-      mcycles
-    in
+    let { len = _; tcycles; inst } = inst_info in
+    let { not_taken = not_taken_tcycles; taken = taken_tcycles } = tcycles in
     let set_flags = Registers.set_flags t.registers in
     let read : type a. a Instruction.arg -> a =
       fun arg ->

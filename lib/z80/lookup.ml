@@ -39,7 +39,9 @@ let bli =
 (* subtract 4 for index in the 2d array *)
 let bli_lookup y z = bli.(y - 4).(z)
 
-let r ~prefix ~(next_byte : unit -> uint8) idx : uint8 Instruction.arg =
+let r ~prefix ~touches_mem ~(next_byte : unit -> uint8) idx
+  : uint8 Instruction.arg
+  =
   let open Instruction in
   let displacement () = Int8.of_byte (next_byte ()) in
   match idx, prefix with
@@ -47,12 +49,12 @@ let r ~prefix ~(next_byte : unit -> uint8) idx : uint8 Instruction.arg =
   | 1, _ -> R Registers.C
   | 2, _ -> R Registers.D
   | 3, _ -> R Registers.E
-  | 4, No_prefix -> R Registers.H
-  | 4, IX -> R Registers.IXH
-  | 4, IY -> R Registers.IYH
-  | 5, No_prefix -> R Registers.L
-  | 5, IX -> R Registers.IXL
-  | 5, IY -> R Registers.IYL
+  | 4, IX when not touches_mem -> R Registers.IXH
+  | 4, IY when not touches_mem -> R Registers.IYH
+  | 4, _ -> R Registers.H (* No_prefix, or prefixed-but-(HL) *)
+  | 5, IX when not touches_mem -> R Registers.IXL
+  | 5, IY when not touches_mem -> R Registers.IYL
+  | 5, _ -> R Registers.L
   | 6, No_prefix -> RR_indirect Registers.HL
   | 6, IX -> IX_indirect (displacement ())
   | 6, IY -> IY_indirect (displacement ())

@@ -11,6 +11,10 @@ type _ arg =
   | IX_indirect : int8 -> uint8 arg
   | IY_indirect : int8 -> uint8 arg
 
+type out_value =
+  | Out_register of Registers.r
+  | Out_zero
+
 type port =
   | Port_n of uint8
   | Port_C
@@ -70,8 +74,8 @@ type t =
   | CPD
   | CPDR
   (* Port I/O *)
-  | IN of Registers.r * port
-  | OUT of port * Registers.r
+  | IN of Registers.r option * port
+  | OUT of port * out_value
   (* Block I/O *)
   | INI
   | INIR
@@ -86,14 +90,14 @@ type t =
   | RLA
   | RRCA
   | RRA
-  | RLC of uint8 arg
-  | RL of uint8 arg
-  | RRC of uint8 arg
-  | RR_rot of uint8 arg
-  | SLA of uint8 arg
-  | SRA of uint8 arg
-  | SLL of uint8 arg
-  | SRL of uint8 arg
+  | RLC of uint8 arg * uint8 arg option
+  | RL of uint8 arg * uint8 arg option
+  | RRC of uint8 arg * uint8 arg option
+  | RR_rot of uint8 arg * uint8 arg option
+  | SLA of uint8 arg * uint8 arg option
+  | SRA of uint8 arg * uint8 arg option
+  | SLL of uint8 arg * uint8 arg option
+  | SRL of uint8 arg * uint8 arg option
   | RLD
   | RRD
   (* Bit manipulation *)
@@ -127,6 +131,11 @@ let show_displacement name d =
   else Printf.sprintf "(%s+%s)" name Int8.(show d)
 ;;
 
+let show_out_value = function
+  | Out_register r -> Registers.show_r r
+  | Out_zero -> "0"
+;;
+
 let show_condition = function
   | C -> "C"
   | NC -> "NC"
@@ -146,7 +155,7 @@ let show_condition_prefix = function
 ;;
 
 let show_port = function
-  | Port_n n -> Printf.sprintf "(%s)" (Uint8.show n)
+  | Port_n n -> Printf.sprintf "(%d)" (Uint8.to_int n)
   | Port_C -> "(C)"
 ;;
 
@@ -206,10 +215,11 @@ let show t =
   | CPD -> "CPD"
   | CPDR -> "CPDR"
   (* --- Port I/O --- *)
-  | IN (r, p) ->
+  | IN (Some r, p) ->
     Printf.sprintf "IN %s, %s" (Registers.show_r r) (show_port p)
-  | OUT (p, r) ->
-    Printf.sprintf "OUT %s, %s" (show_port p) (Registers.show_r r)
+  | IN (None, port) -> Printf.sprintf "IN %s" (show_port port)
+  | OUT (port, value) ->
+    Printf.sprintf "OUT %s,%s" (show_port port) (show_out_value value)
   (* --- Block I/O --- *)
   | INI -> "INI"
   | INIR -> "INIR"
@@ -224,14 +234,22 @@ let show t =
   | RLA -> "RLA"
   | RRCA -> "RRCA"
   | RRA -> "RRA"
-  | RLC x -> Printf.sprintf "RLC %s" (show_arg x)
-  | RL x -> Printf.sprintf "RL %s" (show_arg x)
-  | RRC x -> Printf.sprintf "RRC %s" (show_arg x)
-  | RR_rot x -> Printf.sprintf "RR %s" (show_arg x)
-  | SLA x -> Printf.sprintf "SLA %s" (show_arg x)
-  | SRA x -> Printf.sprintf "SRA %s" (show_arg x)
-  | SLL x -> Printf.sprintf "SLL %s" (show_arg x)
-  | SRL x -> Printf.sprintf "SRL %s" (show_arg x)
+  | RLC (x, None) -> Printf.sprintf "RLC %s" (show_arg x)
+  | RLC (x, Some r) -> Printf.sprintf "RLC %s,%s" (show_arg x) (show_arg r)
+  | RL (x, None) -> Printf.sprintf "RL %s" (show_arg x)
+  | RL (x, Some r) -> Printf.sprintf "RL %s,%s" (show_arg x) (show_arg r)
+  | RRC (x, None) -> Printf.sprintf "RRC %s" (show_arg x)
+  | RRC (x, Some r) -> Printf.sprintf "RRC %s,%s" (show_arg x) (show_arg r)
+  | RR_rot (x, None) -> Printf.sprintf "RR %s" (show_arg x)
+  | RR_rot (x, Some r) -> Printf.sprintf "RR %s,%s" (show_arg x) (show_arg r)
+  | SLA (x, None) -> Printf.sprintf "SLA %s" (show_arg x)
+  | SLA (x, Some r) -> Printf.sprintf "SLA %s,%s" (show_arg x) (show_arg r)
+  | SRA (x, None) -> Printf.sprintf "SRA %s" (show_arg x)
+  | SRA (x, Some r) -> Printf.sprintf "SRA %s,%s" (show_arg x) (show_arg r)
+  | SLL (x, None) -> Printf.sprintf "SLL %s" (show_arg x)
+  | SLL (x, Some r) -> Printf.sprintf "SLL %s,%s" (show_arg x) (show_arg r)
+  | SRL (x, None) -> Printf.sprintf "SRL %s" (show_arg x)
+  | SRL (x, Some r) -> Printf.sprintf "SRL %s,%s" (show_arg x) (show_arg r)
   | RLD -> "RLD"
   | RRD -> "RRD"
   (* --- Bit manipulation --- *)

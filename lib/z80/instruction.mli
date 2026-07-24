@@ -11,6 +11,10 @@ type _ arg =
   | IX_indirect : int8 -> uint8 arg
   | IY_indirect : int8 -> uint8 arg
 
+type out_value =
+  | Out_register of Registers.r
+  | Out_zero
+
 type port =
   | Port_n of uint8 (* (n) : immediate port number *)
   | Port_C (* (C) : port number held in register C *)
@@ -70,8 +74,8 @@ type t =
   | CPDR
   (* --- Port I/O --- Operand order follows the mnemonics: IN r,(port) and
      OUT (port),r. The register side is always a plain 8-bit register. *)
-  | IN of Registers.r * port
-  | OUT of port * Registers.r
+  | IN of Registers.r option * port
+  | OUT of port * out_value
   (* --- Block I/O --- *)
   | INI
   | INIR
@@ -85,14 +89,14 @@ type t =
   | RLA
   | RRCA
   | RRA
-  | RLC of uint8 arg
-  | RL of uint8 arg
-  | RRC of uint8 arg
-  | RR_rot of uint8 arg
-  | SLA of uint8 arg
-  | SRA of uint8 arg
-  | SLL of uint8 arg
-  | SRL of uint8 arg
+  | RLC of uint8 arg * uint8 arg option
+  | RL of uint8 arg * uint8 arg option
+  | RRC of uint8 arg * uint8 arg option
+  | RR_rot of uint8 arg * uint8 arg option
+  | SLA of uint8 arg * uint8 arg option
+  | SRA of uint8 arg * uint8 arg option
+  | SLL of uint8 arg * uint8 arg option
+  | SRL of uint8 arg * uint8 arg option
   | RLD
   | RRD
   | BIT of int * uint8 arg
