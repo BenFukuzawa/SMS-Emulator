@@ -28,7 +28,6 @@ type condition =
   | P
   | PE
   | PO
-  | None
 
 type t =
   (* 8-bit arithmetic and logic *)
@@ -102,17 +101,18 @@ type t =
   | RRD
   (* Bit manipulation *)
   | BIT of int * uint8 arg
-  | SET of int * uint8 arg
-  | RES of int * uint8 arg
+  | SET of int * uint8 arg * uint8 arg option
+  | RES of int * uint8 arg * uint8 arg option
   (* Stack *)
   | PUSH of Registers.rr
   | POP of Registers.rr
   (* Control flow *)
-  | JP of condition * uint16 arg
-  | JR of condition * int8
   | DJNZ of int8
-  | CALL of condition * uint16
-  | RET of condition
+  | JP of condition option * uint16 arg
+  | JP_indirect of Registers.rr
+  | JR of condition option * int8
+  | CALL of condition option * uint16
+  | RET of condition option
   | RETI
   | RETN
   | RST of uint16
@@ -145,13 +145,12 @@ let show_condition = function
   | P -> "P"
   | PE -> "PE"
   | PO -> "PO"
-  | None -> ""
 ;;
 
 (* Condition as it appears before an operand: "Z, " or "" when unconditional. *)
 let show_condition_prefix = function
   | None -> ""
-  | c -> show_condition c ^ ", "
+  | Some c -> show_condition c ^ ", "
 ;;
 
 let show_port = function
@@ -254,21 +253,24 @@ let show t =
   | RRD -> "RRD"
   (* --- Bit manipulation --- *)
   | BIT (n, x) -> Printf.sprintf "BIT %d, %s" n (show_arg x)
-  | SET (n, x) -> Printf.sprintf "SET %d, %s" n (show_arg x)
-  | RES (n, x) -> Printf.sprintf "RES %d, %s" n (show_arg x)
+  | SET (n, x, None) -> Printf.sprintf "SET %d, %s" n (show_arg x)
+  | SET (n, x, Some d) ->
+    Printf.sprintf "SET %d, %s, %s" n (show_arg x) (show_arg d)
+  | RES (n, x, _) -> Printf.sprintf "RES %d, %s" n (show_arg x)
   (* --- Stack --- *)
   | PUSH rr -> Printf.sprintf "PUSH %s" (Registers.show_rr rr)
   | POP rr -> Printf.sprintf "POP %s" (Registers.show_rr rr)
   (* --- Control flow --- *)
   | JP (c, x) ->
     Printf.sprintf "JP %s%s" (show_condition_prefix c) (show_arg x)
+  | JP_indirect rr -> Printf.sprintf "JP (%s)" (Registers.show_rr rr)
   | JR (c, e) ->
     Printf.sprintf "JR %s%s" (show_condition_prefix c) (Int8.show e)
   | DJNZ e -> Printf.sprintf "DJNZ %s" (Int8.show e)
   | CALL (c, nn) ->
     Printf.sprintf "CALL %s%s" (show_condition_prefix c) (Uint16.show nn)
   | RET None -> "RET"
-  | RET c -> Printf.sprintf "RET %s" (show_condition c)
+  | RET (Some c) -> Printf.sprintf "RET %s" (show_condition c)
   | RETI -> "RETI"
   | RETN -> "RETN"
   | RST x -> Printf.sprintf "RST %s" (Uint16.show x)

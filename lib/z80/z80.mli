@@ -5,7 +5,6 @@ module Make (Bus : Word_addressable_intf.S) : sig
 
   val create
     :  bus:Bus.t
-    -> ic:Interrupt_controller.t
     -> registers:Registers.t
     -> sp:uint16
     -> pc:uint16
@@ -23,4 +22,7 @@ module Make (Bus : Word_addressable_intf.S) : sig
     val execute : t -> Inst_info.t -> int
     val prev_inst : t -> Instruction.t
   end
+
+  val set_irq_line : t -> bool -> unit (* VDP: "I'm tapping" / "I stopped" *)
+  val request_nmi : t -> unit (* pause button: "I tapped" *)
 end

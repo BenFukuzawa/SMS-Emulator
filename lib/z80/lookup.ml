@@ -8,24 +8,35 @@ type index_prefix =
 
 let cc = ([| NZ; Z; NC; C; PO; PE; P; M |] : Instruction.condition array)
 
-let alu a =
-  Instruction.[| ADD8 a; ADC8 a; SUB a; SBC8 a; AND a; XOR a; OR a; CP a |]
+let alu =
+  [| (fun a -> ADD8 a)
+   ; (fun a -> ADC8 a)
+   ; (fun a -> SUB a)
+   ; (fun a -> SBC8 a)
+   ; (fun a -> AND a)
+   ; (fun a -> XOR a)
+   ; (fun a -> OR a)
+   ; (fun a -> CP a)
+  |]
 ;;
 
-let rot a =
-  Instruction.[| RLC a; RRC a; RL a; RR_rot a; SLA a; SRA a; SLL a; SRL a |]
+let rot
+  (a : uint8 Instruction.arg)
+  (destination : uint8 Instruction.arg option)
+  : Instruction.t array
+  =
+  [| RLC (a, destination)
+   ; RRC (a, destination)
+   ; RL (a, destination)
+   ; RR_rot (a, destination)
+   ; SLA (a, destination)
+   ; SRA (a, destination)
+   ; SLL (a, destination)
+   ; SRL (a, destination)
+  |]
 ;;
 
 let im = [| 0; 0; 1; 2; 0; 0; 1; 2 |]
-
-let bli =
-  Instruction.
-    [| [| LDI; CPI; INI; OUTI |]
-     ; [| LDD; CPD; IND; OUTD |]
-     ; [| LDIR; CPIR; INIR; OTIR |]
-     ; [| LDDR; CPDR; INDR; OTDR |]
-    |]
-;;
 
 let bli =
   Instruction.

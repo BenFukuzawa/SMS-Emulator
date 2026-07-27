@@ -28,7 +28,6 @@ type condition =
   | P (* Plus (positive) *)
   | PE (* Parity Even / Overflow *)
   | PO (* Parity Odd / No overflow *)
-  | None (* Unconditional *)
 
 type t =
   | ADD8 of uint8 arg
@@ -100,15 +99,16 @@ type t =
   | RLD
   | RRD
   | BIT of int * uint8 arg
-  | SET of int * uint8 arg
-  | RES of int * uint8 arg
+  | SET of int * uint8 arg * uint8 arg option
+  | RES of int * uint8 arg * uint8 arg option
   | PUSH of Registers.rr
   | POP of Registers.rr
-  | JP of condition * uint16 arg
-  | JR of condition * int8
   | DJNZ of int8
-  | CALL of condition * uint16
-  | RET of condition
+  | JP of condition option * uint16 arg
+  | JP_indirect of Registers.rr
+  | JR of condition option * int8
+  | CALL of condition option * uint16
+  | RET of condition option
   | RETI
   | RETN
   | RST of uint16

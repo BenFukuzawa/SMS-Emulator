@@ -20,12 +20,6 @@ type t =
   ; mutable ix : uint16
   ; mutable iy : uint16
   ; mutable sp : uint16
-  ; mutable pc : uint16
-  ; mutable i : uint8
-  ; mutable r : uint8
-  ; mutable iff1 : bool
-  ; mutable iff2 : bool
-  ; mutable halted : bool
   }
 
 type r =
@@ -63,31 +57,27 @@ type flag =
   | Sign
 
 let create () =
-  { a = Uint8.zero
-  ; b = Uint8.zero
-  ; c = Uint8.zero
-  ; d = Uint8.zero
-  ; e = Uint8.zero
-  ; h = Uint8.zero
-  ; l = Uint8.zero
-  ; a_shadow = Uint8.zero
-  ; b_shadow = Uint8.zero
-  ; c_shadow = Uint8.zero
-  ; d_shadow = Uint8.zero
-  ; e_shadow = Uint8.zero
-  ; h_shadow = Uint8.zero
-  ; l_shadow = Uint8.zero
-  ; f = Uint8.zero
-  ; f_shadow = Uint8.zero
-  ; ix = Uint16.zero
-  ; iy = Uint16.zero
-  ; sp = Uint16.zero
-  ; pc = Uint16.zero
-  ; i = Uint8.zero
-  ; r = Uint8.zero
-  ; iff1 = false
-  ; iff2 = false
-  ; halted = false
+  let ff = Uint8.of_int 0xFF in
+  let ffff = Uint16.of_int 0xFFFF in
+  { a = ff
+  ; b = ff
+  ; c = ff
+  ; d = ff
+  ; e = ff
+  ; h = ff
+  ; l = ff
+  ; a_shadow = ff
+  ; b_shadow = ff
+  ; c_shadow = ff
+  ; d_shadow = ff
+  ; e_shadow = ff
+  ; h_shadow = ff
+  ; l_shadow = ff
+  ; f = ff
+  ; f_shadow = ff
+  ; ix = ffff
+  ; iy = ffff
+  ; sp = ffff
   }
 ;;
 
@@ -310,9 +300,6 @@ let show t =
     (Uint16.show t.ix)
     (Uint16.show t.iy)
     (Uint16.show t.sp)
-    (Uint16.show t.pc)
-    (Uint8.show t.i)
-    (Uint8.show t.r)
 ;;
 
 let exx t =
