@@ -1,28 +1,43 @@
 open Uints
 
-module Make (Bus : Word_addressable_intf.S) : sig
+module Make
+    (Mem_bus : Word_addressable_intf.S)
+    (Io_bus : Port_io_intf.S) : sig
   type t
 
-  val create
-    :  bus:Bus.t
-    -> registers:Registers.t
-    -> sp:uint16
-    -> pc:uint16
-    -> halted:bool
-    -> ime:bool
-    -> t
+  val create : bus:Mem_bus.t -> io:Io_bus.t -> registers:Registers.t -> t
 
-  (** Executes a single instruction. ** Returns machine cycle (mcycle) count
-      consumed during the execution. *)
+  (** Fetches, decodes and executes one instruction, or services a pending
+      interrupt. Returns T-states consumed -- the unit the VDP and PSG are
+      clocked against. *)
   val run_instruction : t -> int
 
+  (** Level-triggered maskable interrupt, held asserted by the VDP until the
+      ROM reads the status port. *)
+  val set_irq_line : t -> bool -> unit
+
+  (** Edge-triggered non-maskable interrupt, raised by the pause button. *)
+  val request_nmi : t -> unit
+
   val show : t -> string
+  val last_inst : t -> string
 
   module For_tests : sig
     val execute : t -> Inst_info.t -> int
     val prev_inst : t -> Instruction.t
-  end
+    val pc : t -> uint16
+    val set_pc : t -> uint16 -> unit
+    val registers : t -> Registers.t
+    val interrupt_state : t -> bool * bool * int * uint8 * uint8 * bool
 
-  val set_irq_line : t -> bool -> unit (* VDP: "I'm tapping" / "I stopped" *)
-  val request_nmi : t -> unit (* pause button: "I tapped" *)
+    val set_interrupt_state
+      :  t
+      -> iff1:bool
+      -> iff2:bool
+      -> im:int
+      -> i:uint8
+      -> refresh:uint8
+      -> halted:bool
+      -> unit
+  end
 end

@@ -454,6 +454,7 @@ module Make (Bus : Word_addressable_intf.S) = struct
     | _ -> assert false
   ;;
 
+  (* rotate, shift, or bit test set reset *)
   let decode_cb bus ~pc : Inst_info.t =
     let open Instruction_length in
     let opcode = read_byte_at bus ~pc ~offset:1 |> Uint8.to_int in

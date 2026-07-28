@@ -291,7 +291,7 @@ let show_f f =
 
 let show t =
   Printf.sprintf
-    "A:%s F:%s BC:%s DE:%s HL:%s IX:%s IY:%s SP:%s PC:%s I:%s R:%s"
+    "A:%s F:%s BC:%s DE:%s HL:%s IX:%s IY:%s SP:%s"
     (read_r t A |> Uint8.show)
     (show_f t.f)
     (read_rr t BC |> Uint16.show)
