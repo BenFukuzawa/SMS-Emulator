@@ -1,0 +1,17 @@
+; CPU sanity check: a few hand-written programs.
+(executable
+ (name cpu_test)
+ (modules cpu_test)
+ (libraries sandbox))
+
+; Z80 Instruction Set Exerciser (ZEXDOC / ZEXALL) harness.
+(executable
+ (name zex_runner)
+ (modules zex_runner)
+ (libraries sandbox))
+
+; SingleStepTests harness (not yet implemented).
+(executable
+ (name sst_runner)
+ (modules sst_runner)
+ (libraries sandbox))
