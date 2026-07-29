@@ -10,8 +10,8 @@
  (modules zex_runner)
  (libraries sandbox))
 
-; SingleStepTests harness (not yet implemented).
+; SingleStepTests harness: per-opcode JSON truth data.
 (executable
  (name sst_runner)
  (modules sst_runner)
- (libraries sandbox))
+ (libraries sandbox yojson))

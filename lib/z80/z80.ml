@@ -29,6 +29,8 @@ struct
     ; mutable ei_pending : bool (* EI defers acceptance by one instr *)
     ; mutable irq_line : bool (* level triggered, held by the VDP *)
     ; mutable nmi_pending : bool (* edge triggered, pause button *)
+    ; mutable q : uint8 (* flags left by the last flag-modifying instr *)
+    ; mutable flags_touched : bool (* did the current instr write F? *)
     ; mutable prev_inst : Instruction.t (* debugging only *)
     }
 
@@ -46,6 +48,8 @@ struct
     ; ei_pending = false
     ; irq_line = false
     ; nmi_pending = false
+    ; q = Uint8.zero
+    ; flags_touched = false
     ; prev_inst = NOP
     }
   ;;
@@ -54,7 +58,13 @@ struct
   (* Small helpers *)
   (* ------------------------------------------------------------------ *)
 
-  let set_flags t = Registers.set_flags t.registers
+  let set_flags t =
+    (* Every flag write in this module funnels through here, so this is where
+       the Q register learns that the current instruction modified F. *)
+    t.flags_touched <- true;
+    Registers.set_flags t.registers
+  ;;
+
   let flag t f = Registers.read_flag t.registers f
   let read_a t = Registers.read_r t.registers Registers.A
   let write_a t v = Registers.write_r t.registers Registers.A v
@@ -625,7 +635,7 @@ struct
         let h = flag t Registers.Half_carry in
         let c = flag t Registers.Carry in
         let adjust =
-          (if h || ((not n) && a land 0xF > 9) then 0x06 else 0)
+          (if h || a land 0xF > 9 then 0x06 else 0)
           lor if c || a > 0x99 then 0x60 else 0
         in
         let res = (if n then a - adjust else a + adjust) land 0xFF in
@@ -956,24 +966,30 @@ struct
         t.im <- n;
         Next
       | SCF ->
+        (* Undocumented X/Y come from A | (Q ^ F); Q is set in run_instruction. *)
         let a = Uint8.to_int (read_a t) in
+        let f = Uint16.to_int (read_rr t Registers.AF) land 0xFF in
+        let xy = a lor (Uint8.to_int t.q lxor f) in
         set_flags
           t
-          ~y:(a land 0x20 <> 0)
+          ~y:(xy land 0x20 <> 0)
           ~h:false
-          ~x:(a land 0x08 <> 0)
+          ~x:(xy land 0x08 <> 0)
           ~n:false
           ~c:true
           ();
         Next
       | CCF ->
+        (* Undocumented X/Y come from A | (Q ^ F); Q is set in run_instruction. *)
         let a = Uint8.to_int (read_a t) in
+        let f = Uint16.to_int (read_rr t Registers.AF) land 0xFF in
+        let xy = a lor (Uint8.to_int t.q lxor f) in
         let c = flag t Registers.Carry in
         set_flags
           t
-          ~y:(a land 0x20 <> 0)
+          ~y:(xy land 0x20 <> 0)
           ~h:c
-          ~x:(a land 0x08 <> 0)
+          ~x:(xy land 0x08 <> 0)
           ~n:false
           ~c:(not c)
           ();
@@ -1037,20 +1053,28 @@ struct
   let run_instruction t =
     let was_ei_pending = t.ei_pending in
     t.ei_pending <- false;
-    if t.nmi_pending
-    then accept_nmi t
-    else if t.irq_line && t.iff1 && not was_ei_pending
-    then accept_irq t
-    else if t.halted
-    then (
-      (* HALT executes NOPs until something interrupts it. *)
-      bump_refresh t ~opcode:0x00;
-      4)
-    else (
-      let opcode = Mem_bus.read_byte t.bus t.pc |> Uint8.to_int in
-      bump_refresh t ~opcode;
-      let inst_info = Fetch_and_decode.f t.bus ~pc:t.pc in
-      execute t inst_info)
+    t.flags_touched <- false;
+    let cycles =
+      if t.nmi_pending
+      then accept_nmi t
+      else if t.irq_line && t.iff1 && not was_ei_pending
+      then accept_irq t
+      else if t.halted
+      then (
+        (* HALT executes NOPs until something interrupts it. *)
+        bump_refresh t ~opcode:0x00;
+        4)
+      else (
+        let opcode = Mem_bus.read_byte t.bus t.pc |> Uint8.to_int in
+        bump_refresh t ~opcode;
+        let inst_info = Fetch_and_decode.f t.bus ~pc:t.pc in
+        execute t inst_info)
+    in
+    (* Q holds the flags an instruction left behind, or 0 if the instruction
+       did not write F. SCF/CCF read it for their undocumented X/Y bits. *)
+    let f = Uint16.to_int (read_rr t Registers.AF) land 0xFF in
+    t.q <- Uint8.of_int (if t.flags_touched then f else 0);
+    cycles
   ;;
 
   let last_inst t = Instruction.show t.prev_inst
@@ -1071,6 +1095,8 @@ struct
     let pc t = t.pc
     let set_pc t pc = t.pc <- pc
     let registers t = t.registers
+    let q t = t.q
+    let set_q t q = t.q <- q
     let interrupt_state t = t.iff1, t.iff2, t.im, t.i, t.refresh, t.halted
 
     let set_interrupt_state t ~iff1 ~iff2 ~im ~i ~refresh ~halted =

@@ -28,6 +28,8 @@ module Make
     val pc : t -> uint16
     val set_pc : t -> uint16 -> unit
     val registers : t -> Registers.t
+    val q : t -> uint8
+    val set_q : t -> uint8 -> unit
     val interrupt_state : t -> bool * bool * int * uint8 * uint8 * bool
 
     val set_interrupt_state
