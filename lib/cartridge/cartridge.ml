@@ -4,11 +4,11 @@ open Uints
 
    The CPU's low 48 KB (0x0000-0xBFFF) is three 16 KB slots into ROM, each
    pointed at a bank by a control register that lives at the very top of the
-   address space:
+   address space (4th space is taken up by the RAM):
 
-     slot 0  0x0000-0x3FFF   bank = reg 0xFFFD
-     slot 1  0x4000-0x7FFF   bank = reg 0xFFFE
-     slot 2  0x8000-0xBFFF   bank = reg 0xFFFF, or cartridge RAM (reg 0xFFFC)
+   slot 0 0x0000-0x3FFF bank = reg 0xFFFD slot 1 0x4000-0x7FFF bank = reg
+   0xFFFE slot 2 0x8000-0xBFFF bank = reg 0xFFFF, or cartridge RAM (reg
+   0xFFFC)
 
    The first 1 KB (0x0000-0x03FF) is *always* ROM bank 0 regardless of reg
    0xFFFD, so the RST/interrupt vectors can never be paged out.
@@ -99,8 +99,9 @@ let write_byte t ~addr ~data =
       t.cart_ram
       ((ram_bank t * bank_size) + (a - 0x8000))
       (Uint8.to_char data)
-  (* ROM is not writable; other writes are ignored. *)
 ;;
+
+(* ROM is not writable; other writes are ignored. *)
 
 let accepts _ addr =
   let a = Uint16.to_int addr in

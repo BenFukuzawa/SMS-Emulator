@@ -13,7 +13,13 @@ module Test_vdp = struct
     }
 
   let create () =
-    { data_w = -1; ctrl_w = -1; data_r = 0xD0; ctrl_r = 0xC0; v = 0x7E; h = 0x7F }
+    { data_w = -1
+    ; ctrl_w = -1
+    ; data_r = 0xD0
+    ; ctrl_r = 0xC0
+    ; v = 0x7E
+    ; h = 0x7F
+    }
   ;;
 
   let read_data t = Uint8.of_int t.data_r
@@ -62,7 +68,9 @@ let () =
   let joy = Test_joypad.create () in
   let io = Io.create ~vdp ~psg ~joypad:joy in
   let rd p = Uint8.to_int (Io.read_port io ~port:(Uint8.of_int p)) in
-  let wr p v = Io.write_port io ~port:(Uint8.of_int p) ~data:(Uint8.of_int v) in
+  let wr p v =
+    Io.write_port io ~port:(Uint8.of_int p) ~data:(Uint8.of_int v)
+  in
   (* reads *)
   check "0x7E V counter" ~expect:0x7E ~got:(rd 0x7E);
   check "0x7F H counter" ~expect:0x7F ~got:(rd 0x7F);
