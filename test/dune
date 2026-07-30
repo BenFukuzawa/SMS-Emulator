@@ -1,16 +1,26 @@
 ; CPU sanity check: a few hand-written programs.
+
 (executable
  (name cpu_test)
  (modules cpu_test)
  (libraries sandbox))
 
 ; Z80 Instruction Set Exerciser (ZEXDOC / ZEXALL) harness.
+
 (executable
  (name zex_runner)
  (modules zex_runner)
  (libraries sandbox))
 
+; VDP port protocol: the $BE/$BF state machine. Exits nonzero on failure.
+
+(executable
+ (name vdp_test)
+ (modules vdp_test)
+ (libraries sandbox))
+
 ; SingleStepTests harness: per-opcode JSON truth data.
+
 (executable
  (name sst_runner)
  (modules sst_runner)
