@@ -70,6 +70,13 @@ module For_tests : sig
 
   val bg_palette : t -> int -> int
   val bg_priority : t -> int -> bool
+
+  (** The sprite colour at a pixel, 0 where no sprite covers it. *)
+  val sprite_index : t -> int -> int
+
+  (** Sprite and background resolved into one CRAM entry, 0-31. *)
+  val composite : t -> int -> int
+
   val vscroll_latch : t -> int
   val render_line : t -> line:int -> unit
 

@@ -560,9 +560,19 @@ let ramp_x = Array.init 8 (fun _ -> Array.init 8 (fun x -> x)) (* 0-7 across *)
 let ramp_y = Array.init 8 (fun y -> Array.init 8 (fun _ -> y)) (* 0-7 down *)
 let high_x = Array.init 8 (fun _ -> Array.init 8 (fun x -> 8 + x)) (* 8-15 *)
 
+(* Opaque on one half only, so two sprites can overlap in x without ever
+   both being opaque at the same pixel. *)
+let left_half =
+  Array.init 8 (fun _ -> Array.init 8 (fun x -> if x < 4 then 1 else 0))
+;;
+
+let right_half =
+  Array.init 8 (fun _ -> Array.init 8 (fun x -> if x >= 4 then 2 else 0))
+;;
+
 (* rows.(y).(x) is the colour index of pixel x on line y. Split it back into
    the four bitplanes the chip stores. *)
-let put_tile t ~index rows =
+let put_tile t ?(base = 0) ~index rows =
   Array.iteri
     (fun y row ->
       for plane = 0 to 3 do
@@ -574,7 +584,7 @@ let put_tile t ~index rows =
           row;
         Vdp.For_tests.set_vram_byte
           t
-          ~addr:((index * 32) + (y * 4) + plane)
+          ~addr:(base + (index * 32) + (y * 4) + plane)
           ~data:!byte
       done)
     rows
@@ -618,14 +628,39 @@ let fill_column t ~col ~tile =
 (* R0 $06: mode 4, M3 set, no scroll locks, left column shown. R1 $E0:
    display enabled, 192 lines. The power-on values have the left column
    masked and the display off, which would swallow most of these tests. *)
+let sat = 0x3F00
+
+(* Every Y coordinate starts off the bottom of a 192-line display, so a test
+   only sees the sprites it places. $C0 rather than the $D0 terminator: a
+   terminator at entry 0 would stop the scan before anything a test writes. *)
+let clear_sprites t =
+  for i = 0 to 63 do
+    Vdp.For_tests.set_vram_byte t ~addr:(sat + i) ~data:0xC0
+  done
+;;
+
+let put_sprite t ~index ~y ~x ~tile =
+  Vdp.For_tests.set_vram_byte t ~addr:(sat + index) ~data:y;
+  Vdp.For_tests.set_vram_byte t ~addr:(sat + 0x80 + (index * 2)) ~data:x;
+  Vdp.For_tests.set_vram_byte
+    t
+    ~addr:(sat + 0x80 + (index * 2) + 1)
+    ~data:tile
+;;
+
 let scene () =
   let t = Vdp.create () in
   set_reg t 0 0x06;
   set_reg t 1 0xE0;
   set_reg t 2 0xFF;
+  set_reg t 5 0xFF (* sprite attributes at $3F00 *);
+  set_reg t 6 0xFB (* sprite patterns at $0000 *);
   put_tile t ~index:1 ramp_x;
   put_tile t ~index:2 ramp_y;
   put_tile t ~index:3 high_x;
+  put_tile t ~index:4 left_half;
+  put_tile t ~index:5 right_half;
+  clear_sprites t;
   t
 ;;
 
@@ -848,6 +883,247 @@ let test_display_disabled () =
     ~actual:(Vdp.For_tests.bg_priority t 128)
 ;;
 
+(* --- sprites -----------------------------------------------------------
+
+   Sprite i has its Y at SAT+i and its X and pattern index at SAT+$80+2i and
+   SAT+$80+2i+1. All quotes below are MacDonald's unless attributed. *)
+
+let sp t x = Vdp.For_tests.sprite_index t x
+let cram t x = Vdp.For_tests.composite t x
+
+let test_sprite_y_is_plus_one () =
+  group "sprite Y is plus one";
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  (* "a value of zero would place a sprite on scanline 1 and not scanline
+     zero." *)
+  render t ~line:0;
+  check ~name:"nothing on line 0" ~expect:0 ~actual:(sp t 101);
+  render t ~line:1;
+  check ~name:"drawn on line 1" ~expect:1 ~actual:(sp t 101);
+  check ~name:"and across the tile" ~expect:7 ~actual:(sp t 107);
+  (* Colour 0 is transparent -- inferred, not stated in the document. *)
+  check ~name:"colour 0 leaves no pixel" ~expect:0 ~actual:(sp t 100);
+  (* "sprite colors are always taken from the second group of 16 colors in
+     the color RAM." *)
+  check ~name:"composites into CRAM 17" ~expect:17 ~actual:(cram t 101)
+;;
+
+let test_sprite_pattern_base () =
+  group "sprite pattern base";
+  let t = scene () in
+  (* R6 bit 2 moves sprite patterns to $2000. The tile written there differs
+     from tile 1 at $0020, so reading the wrong base is visible. *)
+  put_tile t ~base:0x2000 ~index:1 high_x;
+  set_reg t 6 0xFF;
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  render t ~line:1;
+  check ~name:"pattern came from $2000" ~expect:9 ~actual:(sp t 101);
+  set_reg t 6 0xFB;
+  render t ~line:1;
+  check ~name:"and from $0000 when clear" ~expect:1 ~actual:(sp t 101)
+;;
+
+let test_tall_sprites () =
+  group "tall sprites";
+  let t = scene () in
+  set_reg t 1 0xE2 (* display on, bit 1: 8x16 *);
+  (* Pattern index 3 with bit 0 ignored is 2, so the top half is ramp_y and
+     the bottom half is high_x. Asking for 3 and getting ramp_y is the
+     assertion. *)
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:3;
+  render t ~line:4;
+  check ~name:"top half is pattern 2" ~expect:3 ~actual:(sp t 100);
+  render t ~line:9;
+  check ~name:"bottom half is pattern 3" ~expect:8 ~actual:(sp t 100);
+  check ~name:"bottom half, across" ~expect:11 ~actual:(sp t 103);
+  render t ~line:17;
+  check ~name:"and stops after 16 rows" ~expect:0 ~actual:(sp t 103)
+;;
+
+let test_zoomed_sprites () =
+  group "zoomed sprites";
+  let t = scene () in
+  set_reg t 1 0xE1 (* bit 0: doubled *);
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  render t ~line:1;
+  (* "8x8 sprites are 16x16": each pattern pixel covers two screen pixels. *)
+  check ~name:"pixel 1 covers x 102" ~expect:1 ~actual:(sp t 102);
+  check ~name:"and x 103" ~expect:1 ~actual:(sp t 103);
+  check ~name:"pixel 2 starts at x 104" ~expect:2 ~actual:(sp t 104);
+  check ~name:"16 pixels wide" ~expect:7 ~actual:(sp t 115);
+  (* Vertically too, which needs a pattern whose rows differ. *)
+  let t = scene () in
+  set_reg t 1 0xE1;
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:2;
+  render t ~line:3;
+  check ~name:"lines 3 and 4 are pattern row 1" ~expect:1 ~actual:(sp t 100);
+  render t ~line:4;
+  check ~name:"line 4 too" ~expect:1 ~actual:(sp t 100);
+  render t ~line:5;
+  check ~name:"line 5 moves on" ~expect:2 ~actual:(sp t 100)
+;;
+
+let test_shift_sprites_left () =
+  group "EC shifts sprites left";
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:8 ~tile:1;
+  render t ~line:1;
+  check ~name:"unshifted, pixel 1 at x 9" ~expect:1 ~actual:(sp t 9);
+  (* "D3 - (EC) 1 = Shift sprites left by 8 pixels" *)
+  set_reg t 0 0x0E;
+  render t ~line:1;
+  check ~name:"shifted, pixel 1 at x 1" ~expect:1 ~actual:(sp t 1);
+  check ~name:"and gone from x 9" ~expect:0 ~actual:(sp t 9)
+;;
+
+let test_eight_sprites_per_line () =
+  group "eight sprites per line";
+  let t = scene () in
+  for i = 0 to 7 do
+    put_sprite t ~index:i ~y:0 ~x:(i * 8) ~tile:1
+  done;
+  render t ~line:1;
+  check_bool
+    ~name:"eight is not an overflow"
+    ~expect:false
+    ~actual:(Vdp.For_tests.overflow t);
+  check ~name:"the eighth is drawn" ~expect:1 ~actual:(sp t 57);
+  (* A ninth on the same line. *)
+  put_sprite t ~index:8 ~y:0 ~x:64 ~tile:1;
+  render t ~line:1;
+  check_bool
+    ~name:"nine sets the overflow flag"
+    ~expect:true
+    ~actual:(Vdp.For_tests.overflow t);
+  check ~name:"and the ninth is not drawn" ~expect:0 ~actual:(sp t 65)
+;;
+
+let test_overflow_ignores_pattern_and_x () =
+  group "overflow is decided before the fetch";
+  (* "regardless of the sprite X coordinate or pattern data" -- a ninth
+     sprite with a blank pattern still sets the flag. *)
+  let t = scene () in
+  for i = 0 to 7 do
+    put_sprite t ~index:i ~y:0 ~x:(i * 8) ~tile:1
+  done;
+  put_sprite t ~index:8 ~y:0 ~x:0 ~tile:0;
+  render t ~line:1;
+  check_bool
+    ~name:"blank ninth sprite still overflows"
+    ~expect:true
+    ~actual:(Vdp.For_tests.overflow t)
+;;
+
+let test_sprite_collision () =
+  group "sprite collision";
+  let t = scene () in
+  (* Overlapping exactly. Pattern 1 is transparent at its pixel 0 and
+     pattern 3 is not, so the first pixel is a test of transparency and the
+     rest are a test of ordering. *)
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  put_sprite t ~index:1 ~y:0 ~x:100 ~tile:3;
+  render t ~line:1;
+  check_bool
+    ~name:"opaque overlap sets the flag"
+    ~expect:true
+    ~actual:(Vdp.For_tests.collision t);
+  (* "An opaque pixel from a lower-entry sprite is displayed over any opaque
+     pixel from a higher-entry sprite." *)
+  check ~name:"the lower-numbered sprite wins" ~expect:1 ~actual:(sp t 101);
+  (* Where the lower sprite is transparent the higher one shows through, and
+     that is not a collision. *)
+  check ~name:"transparent lets the other through" ~expect:8
+    ~actual:(sp t 100);
+  (* Apart, they do not collide. *)
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  put_sprite t ~index:1 ~y:0 ~x:200 ~tile:3;
+  render t ~line:1;
+  check_bool
+    ~name:"separated sprites do not"
+    ~expect:false
+    ~actual:(Vdp.For_tests.collision t)
+;;
+
+(* "In the situation where any two sprites from any of the eight positions
+   have opaque pixels that overlap" -- overlapping in x is not enough, both
+   pixels have to be opaque. Sprites whose opaque halves miss each other
+   must not set the flag, and a transparent pixel must not overwrite or
+   collide with the opaque one underneath it. *)
+let test_transparent_pixels_do_not_collide () =
+  group "only opaque pixels collide";
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:4 (* opaque on the left *);
+  put_sprite t ~index:1 ~y:0 ~x:100 ~tile:5 (* opaque on the right *);
+  render t ~line:1;
+  check_bool
+    ~name:"halves that miss do not collide"
+    ~expect:false
+    ~actual:(Vdp.For_tests.collision t);
+  check ~name:"left half is sprite 0" ~expect:1 ~actual:(sp t 100);
+  check ~name:"right half is sprite 1" ~expect:2 ~actual:(sp t 104)
+;;
+
+let test_d0_terminator () =
+  group "the $D0 terminator";
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:0 ~tile:1;
+  put_sprite t ~index:1 ~y:0xD0 ~x:16 ~tile:1;
+  put_sprite t ~index:2 ~y:0 ~x:32 ~tile:1;
+  render t ~line:1;
+  (* "the sprite in question and all remaining sprites of the 64 available
+     will not be drawn." *)
+  check ~name:"sprites before it are drawn" ~expect:1 ~actual:(sp t 1);
+  check ~name:"sprites after it are not" ~expect:0 ~actual:(sp t 33);
+  (* "This has no effect in the 224 and 240-line display modes." *)
+  set_reg t 1 0xF0 (* display on, 224 lines *);
+  render t ~line:1;
+  check ~name:"224-line mode ignores it" ~expect:1 ~actual:(sp t 33)
+;;
+
+(* "The resulting sprite pixel is printed over any low priority background
+   tile. Or, for high priority background tiles, only where there is a
+   transparent pixel." *)
+let test_background_priority () =
+  group "sprite versus background priority";
+  let t = scene () in
+  put_entry t ~row:0 ~col:0 ~tile:1 ~priority:true ();
+  put_sprite t ~index:0 ~y:0 ~x:0 ~tile:3;
+  render t ~line:1;
+  (* Background pixel 0 is colour 0, so the sprite shows through even though
+     the tile has priority. *)
+  check ~name:"priority tile, transparent pixel" ~expect:24 ~actual:(cram t 0);
+  (* Background pixel 1 is colour 1, so the tile wins. *)
+  check ~name:"priority tile, opaque pixel" ~expect:1 ~actual:(cram t 1);
+  (* Without priority the sprite wins everywhere it is opaque. *)
+  put_entry t ~row:0 ~col:0 ~tile:1 ~priority:false ();
+  render t ~line:1;
+  check ~name:"low priority tile loses" ~expect:25 ~actual:(cram t 1)
+;;
+
+let test_sprites_respect_blanking () =
+  group "sprites and blanking";
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:0 ~tile:3;
+  (* Display off: nothing is fetched, sprites included. *)
+  set_reg t 1 0xA0;
+  render t ~line:1;
+  check ~name:"display off hides sprites" ~expect:0 ~actual:(sp t 1);
+  (* The masked left column covers sprites too. Straddle the boundary: this
+     sprite runs from x 4 to x 11, so four of its pixels are masked and four
+     are not. *)
+  let t = scene () in
+  put_sprite t ~index:0 ~y:0 ~x:4 ~tile:3;
+  set_reg t 0 0x26;
+  set_reg t 7 0x05;
+  render t ~line:1;
+  check ~name:"masked column hides sprites" ~expect:0 ~actual:(sp t 5);
+  check ~name:"and shows the overscan colour" ~expect:21 ~actual:(cram t 5);
+  check ~name:"sprite survives past the mask" ~expect:12 ~actual:(sp t 8);
+  check ~name:"to its last pixel" ~expect:15 ~actual:(sp t 11)
+;;
+
 let () =
   test_register_write ();
   test_write_and_increment ();
@@ -884,6 +1160,18 @@ let () =
   test_vscroll_lock ();
   test_hide_left_column ();
   test_display_disabled ();
+  test_sprite_y_is_plus_one ();
+  test_sprite_pattern_base ();
+  test_tall_sprites ();
+  test_zoomed_sprites ();
+  test_shift_sprites_left ();
+  test_eight_sprites_per_line ();
+  test_overflow_ignores_pattern_and_x ();
+  test_sprite_collision ();
+  test_transparent_pixels_do_not_collide ();
+  test_d0_terminator ();
+  test_background_priority ();
+  test_sprites_respect_blanking ();
   print_newline ();
   if !failures = 0
   then print_endline "all VDP port tests passed"

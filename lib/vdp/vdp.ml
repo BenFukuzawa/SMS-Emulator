@@ -35,6 +35,7 @@ type t =
     bg_index : int array (* 256, colour 0-15 within the line's palette *)
   ; bg_palette : int array (* 256, 0 = CRAM 0-15, 1 = CRAM 16-31 *)
   ; bg_priority : bool array (* 256, name table bit p *)
+  ; sprite_index : int array (* 256, 0 = no sprite pixel here *)
   }
 
 (* North American hardware only: 262 scanlines of 228 T-states each, so 59736
@@ -166,6 +167,7 @@ let create () =
   ; bg_index = Array.make 256 0
   ; bg_palette = Array.make 256 0
   ; bg_priority = Array.make 256 false
+  ; sprite_index = Array.make 256 0
   }
 ;;
 
@@ -322,8 +324,7 @@ let vram t addr = Char.code (Bytes.unsafe_get t.vram (addr land 0x3FFF))
    etc., up to line 7." So the four bytes of a row are not four pixels: each
    contributes one bit to all eight, and a pixel's colour is read across
    them. *)
-let pattern_pixel t ~tile ~row ~x =
-  let addr = (tile * 32) + (row * 4) in
+let pattern_pixel t ~addr ~x =
   let bit = 7 - x in
   let plane n = (vram t (addr + n) lsr bit) land 1 in
   plane 0 lor (plane 1 lsl 1) lor (plane 2 lsl 2) lor (plane 3 lsl 3)
@@ -340,14 +341,10 @@ let fill_with_backdrop t ~from ~until =
   done
 ;;
 
-let render_line t =
+let render_background t =
   let line = t.line in
-  (* With the display off nothing is fetched at all and the whole line,
-     active area included, is the overscan colour. *)
-  if not (display_enabled t)
-  then fill_with_backdrop t ~from:0 ~until:255
-  else (
-    let base = name_table_base t in
+  let base = name_table_base t in
+  begin
     (* "In 192-line mode the vertical scroll register wraps past 223"; the
        taller modes wrap past 255. That is the tilemap being 28 rows tall
        rather than 32. *)
@@ -378,14 +375,139 @@ let render_line t =
       and col = src_x land 7 in
       let row = if vflip then 7 - row else row
       and col = if hflip then 7 - col else col in
-      t.bg_index.(x) <- pattern_pixel t ~tile ~row ~x:col;
+      t.bg_index.(x)
+        <- pattern_pixel t ~addr:((tile * 32) + (row * 4)) ~x:col;
       t.bg_palette.(x) <- (hi lsr 3) land 1;
       t.bg_priority.(x) <- hi land 0x10 <> 0
-    done;
-    (* "1 = Mask column 0 with overscan color from register #7." Sprites are
-       masked by it too, so the sprite pass must skip these eight pixels as
-       well rather than relying on this. *)
-    if hide_left_column t then fill_with_backdrop t ~from:0 ~until:7)
+    done
+  end
+;;
+
+(* --- the sprite renderer -----------------------------------------------
+
+   "Each sprite is defined in the sprite attribute table (SAT), a 256-byte
+   table located in VRAM", holding 64 sprites laid out as
+
+     00: yyyyyyyyyyyyyyyy   y = Y coordinate + 1
+     ...
+     80: xnxnxnxnxnxnxnxn   x = X coordinate, n = pattern index
+
+   so sprite i has its Y at base+i and its X and pattern index at
+   base+$80+2i and base+$80+2i+1. The $40-$7F gap is unused and some games
+   store their own data there.
+
+   That colour 0 is transparent is NOT stated anywhere in MacDonald's
+   document. It is assumed here, on the strength of the collision and
+   priority rules both being written in terms of "opaque" pixels, which
+   presupposes that some sprite pixels are not. *)
+
+let sprite_height t =
+  (if tall_sprites t then 16 else 8) * if zoom_sprites t then 2 else 1
+;;
+
+let draw_sprite t ~sprite ~row =
+  let sat = sprite_attr_base t in
+  let x0 = vram t (sat + 0x80 + (sprite * 2)) in
+  let pattern = vram t (sat + 0x80 + (sprite * 2) + 1) in
+  (* "D3 - (EC) 1 = Shift sprites left by 8 pixels" *)
+  let x0 = if shift_sprites t then x0 - 8 else x0 in
+  (* "When bit 0 of register #1 is set, sprite pixels are zoomed to double
+     their size." The SMS1 only zooms four of the eight sprites on a line
+     horizontally; the SMS2 modelled here zooms all of them. *)
+  let zoom = zoom_sprites t in
+  let row = if zoom then row / 2 else row in
+  (* "When bit 1 of register #1 is set, bit 0 of the pattern index is
+     ignored... the same pattern index plus one is used for the bottom
+     half." Rows 8-15 give a row offset past 32 bytes, so the address walks
+     into the next pattern on its own. *)
+  let pattern = if tall_sprites t then pattern land 0xFE else pattern in
+  let addr = sprite_pattern_base t + (pattern * 32) + (row * 4) in
+  let width = if zoom then 2 else 1 in
+  for px = 0 to 7 do
+    let colour = pattern_pixel t ~addr ~x:px in
+    if colour <> 0
+    then
+      for d = 0 to width - 1 do
+        let x = x0 + (px * width) + d in
+        if x >= 0 && x < 256
+        then
+          (* "An opaque pixel from a lower-entry sprite is displayed over any
+             opaque pixel from a higher-entry sprite", and sprites are drawn
+             in order, so an occupied slot means the earlier sprite wins --
+             and that the two have collided. *)
+          if t.sprite_index.(x) <> 0
+          then t.collision <- true
+          else t.sprite_index.(x) <- colour
+      done
+  done
+;;
+
+let render_sprites t =
+  let line = t.line in
+  let sat = sprite_attr_base t in
+  let height = sprite_height t in
+  (* "If the Y coordinate is set to $D0, then the sprite in question and all
+     remaining sprites of the 64 available will not be drawn." No effect in
+     the taller modes. *)
+  let terminates = active_lines t = 192 in
+  let drawn = ref 0 in
+  let sprite = ref 0 in
+  let stop = ref false in
+  while (not !stop) && !sprite < 64 do
+    let y = vram t (sat + !sprite) in
+    if terminates && y = 0xD0
+    then stop := true
+    else (
+      (* "The Y coordinate is treated as being plus one, so a value of zero
+         would place a sprite on scanline 1 and not scanline zero." Compared
+         as plain integers, so a Y near $FF puts the sprite past the bottom
+         of the screen rather than wrapping to the top. *)
+      let row = line - (y + 1) in
+      if row >= 0 && row < height
+      then
+        if !drawn = 8
+        then
+          (* "If all eight buffer entries have been used and there are more
+             sprites that fall on the same line, bit 6 of the status flags is
+             set" -- "regardless of the sprite X coordinate or pattern
+             data", so this is decided before anything is fetched. *)
+          (t.overflow <- true;
+           stop := true)
+        else (
+          incr drawn;
+          draw_sprite t ~sprite:!sprite ~row);
+      incr sprite)
+  done
+;;
+
+let render_line t =
+  Array.fill t.sprite_index 0 256 0;
+  (* With the display off nothing is fetched at all and the whole line,
+     active area included, is the overscan colour. *)
+  if not (display_enabled t)
+  then fill_with_backdrop t ~from:0 ~until:255
+  else (
+    render_background t;
+    render_sprites t;
+    (* "1 = Mask column 0 with overscan color from register #7." The mask is
+       the last thing the chip does, so it covers sprites too. *)
+    if hide_left_column t
+    then (
+      fill_with_backdrop t ~from:0 ~until:7;
+      Array.fill t.sprite_index 0 8 0))
+;;
+
+(* The finished pixel, as an index into CRAM's 32 entries.
+
+   "The resulting sprite pixel is printed over any low priority background
+   tile. Or, for high priority background tiles, only where there is a
+   transparent pixel." Sprite colours "are always taken from the second
+   group of 16 colors in the color RAM". *)
+let composite t x =
+  let sprite = t.sprite_index.(x) in
+  if sprite <> 0 && not (t.bg_priority.(x) && t.bg_index.(x) <> 0)
+  then 16 + sprite
+  else (t.bg_palette.(x) * 16) + t.bg_index.(x)
 ;;
 
 (* Everything that happens between one line and the next, in the order the
@@ -470,6 +592,8 @@ module For_tests = struct
   let bg_index t x = t.bg_index.(x)
   let bg_palette t x = t.bg_palette.(x)
   let bg_priority t x = t.bg_priority.(x)
+  let sprite_index t x = t.sprite_index.(x)
+  let composite t x = composite t x
   let vscroll_latch t = t.vscroll
 
   (* Render one line on demand. The engine only ever renders the line it is
