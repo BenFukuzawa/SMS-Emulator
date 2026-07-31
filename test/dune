@@ -46,3 +46,24 @@
  (name io_bus_test)
  (modules io_bus_test)
  (libraries sandbox))
+
+; The assembled console: a hand-written ROM driven through Machine alone.
+
+(executable
+ (name machine_test)
+ (modules machine_test)
+ (libraries sandbox))
+
+; Boots a hand-assembled ROM on the whole machine and dumps the frame.
+
+(executable
+ (name machine_frame)
+ (modules machine_frame)
+ (libraries sandbox))
+
+; Joypad: SMS controller port A/B decoding + key mapping.
+
+(executable
+ (name joypad_test)
+ (modules joypad_test)
+ (libraries sandbox))

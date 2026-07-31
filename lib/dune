@@ -1,7 +1,20 @@
-; Peripherals are added here as they are finished. Still out of the build:
-; joypad, psg, machine, cart. io_bus is a functor over interface signatures
-; (in shared/), so it builds without the concrete peripherals.
-(dirs uints registers shared z80 vdp memory_bus cartridge ram io_bus)
+; Every peripheral subdirectory is in the build now.
+;
+; Note that (dirs) governs subdirectories only. machine.ml and cart.ml sit
+; directly in lib/ and are always compiled, whatever this list says.
+
+(dirs
+ uints
+ registers
+ shared
+ z80
+ vdp
+ memory_bus
+ cartridge
+ ram
+ io_bus
+ psg
+ joypad)
 
 (include_subdirs unqualified)
 
