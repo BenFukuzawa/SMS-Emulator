@@ -287,10 +287,7 @@ let test_table_bases () =
   check
     ~name:"R6 = $FF -> $2000"
     ~expect:0x2000
-    ~actual:(sprite_pattern_base t);
-  (* The backdrop indexes the sprite half of CRAM, so entries 16-31. *)
-  set_reg t 7 0x05;
-  check ~name:"R7 = $05 -> CRAM 21" ~expect:21 ~actual:(backdrop_colour t)
+    ~actual:(sprite_pattern_base t)
 ;;
 
 let test_display_height () =
@@ -1124,6 +1121,136 @@ let test_sprites_respect_blanking () =
   check ~name:"to its last pixel" ~expect:15 ~actual:(sp t 11)
 ;;
 
+(* --- colour and the framebuffer ----------------------------------------
+
+   A CRAM entry is "--BBGGRR", two bits per channel. The mapping onto an
+   eight-bit level is not documented; 0/85/170/255 is the assumption under
+   test here as much as the code is. *)
+
+let put_cram t ~entry ~value =
+  command t ~low:entry ~high:0xC0;
+  data t value
+;;
+
+(* Red, green and blue channels of the pixel at (x, y) in the framebuffer. *)
+let rgb t ~x ~y =
+  let fb = Vdp.framebuffer t in
+  let at = (((y * 256) + x) * 3) in
+  ( Char.code (Bytes.get fb at)
+  , Char.code (Bytes.get fb (at + 1))
+  , Char.code (Bytes.get fb (at + 2)) )
+;;
+
+let check_rgb ~name ~expect ~actual =
+  let r, g, b = expect
+  and r', g', b' = actual in
+  if r = r' && g = g' && b = b'
+  then Printf.printf "  PASS  %s\n" name
+  else (
+    incr failures;
+    Printf.printf
+      "  FAIL  %s: expected (%d,%d,%d), got (%d,%d,%d)\n"
+      name
+      r
+      g
+      b
+      r'
+      g'
+      b')
+;;
+
+let test_colour_expansion () =
+  group "CRAM to RGB";
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  (* Each channel is two bits, spread across the byte low to high: red in
+     bits 1-0, green in 3-2, blue in 5-4. *)
+  put_cram t ~entry:1 ~value:0x03 (* red at full *);
+  put_cram t ~entry:2 ~value:0x0C (* green at full *);
+  put_cram t ~entry:3 ~value:0x30 (* blue at full *);
+  put_cram t ~entry:4 ~value:0x3F (* white *);
+  put_cram t ~entry:5 ~value:0x15 (* one third of each *);
+  render t ~line:0;
+  (* Tile 1 puts colour n at pixel n, so pixel n shows CRAM entry n. *)
+  check_rgb ~name:"entry 1 is red" ~expect:(255, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb
+    ~name:"entry 2 is green"
+    ~expect:(0, 255, 0)
+    ~actual:(rgb t ~x:2 ~y:0);
+  check_rgb
+    ~name:"entry 3 is blue"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:3 ~y:0);
+  check_rgb
+    ~name:"entry 4 is white"
+    ~expect:(255, 255, 255)
+    ~actual:(rgb t ~x:4 ~y:0);
+  (* $15 = 01 01 01: one step of three on every channel. *)
+  check_rgb
+    ~name:"one step is 85"
+    ~expect:(85, 85, 85)
+    ~actual:(rgb t ~x:5 ~y:0);
+  (* Entry 0 was never written, so it is still black. *)
+  check_rgb ~name:"entry 0 is black" ~expect:(0, 0, 0) ~actual:(rgb t ~x:0 ~y:0);
+  (* The top two bits of a CRAM byte are not part of any channel. *)
+  put_cram t ~entry:1 ~value:0xC3;
+  render t ~line:0;
+  check_rgb
+    ~name:"bits 7-6 are ignored"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+let test_sprite_palette_reaches_the_framebuffer () =
+  group "sprite palette in the framebuffer";
+  let t = scene () in
+  (* Entry 17 is colour 1 of the sprite palette. *)
+  put_cram t ~entry:17 ~value:0x30;
+  put_sprite t ~index:0 ~y:0 ~x:100 ~tile:1;
+  render t ~line:1;
+  check_rgb
+    ~name:"sprite colour 1 came from CRAM 17"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:101 ~y:1)
+;;
+
+let test_frame_size_follows_the_mode () =
+  group "frame size";
+  let t = scene () in
+  let w, h = Vdp.frame_size t in
+  check ~name:"192-line width" ~expect:256 ~actual:w;
+  check ~name:"192-line height" ~expect:192 ~actual:h;
+  set_reg t 1 0xF0;
+  let _, h = Vdp.frame_size t in
+  check ~name:"224-line height" ~expect:224 ~actual:h;
+  set_reg t 1 0xE8;
+  let _, h = Vdp.frame_size t in
+  check ~name:"240-line height" ~expect:240 ~actual:h
+;;
+
+let test_a_whole_frame_is_written () =
+  group "a whole frame";
+  let t = scene () in
+  put_cram t ~entry:0 ~value:0x30 (* blue background *);
+  fill_row t ~row:0 ~tile:0;
+  (* Run a frame through step rather than rendering by hand, so the engine
+     is what fills the buffer. *)
+  step_lines t lines_per_frame;
+  check ~name:"one frame" ~expect:1 ~actual:(Vdp.frame_count t);
+  check_rgb ~name:"top left" ~expect:(0, 0, 255) ~actual:(rgb t ~x:0 ~y:0);
+  check_rgb ~name:"top right" ~expect:(0, 0, 255) ~actual:(rgb t ~x:255 ~y:0);
+  check_rgb
+    ~name:"bottom left"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:0 ~y:191);
+  check_rgb
+    ~name:"bottom right"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:255 ~y:191);
+  (* Line 192 is past the active display and must never have been drawn. *)
+  check_rgb ~name:"line 192 untouched" ~expect:(0, 0, 0) ~actual:(rgb t ~x:0 ~y:192)
+;;
+
 let () =
   test_register_write ();
   test_write_and_increment ();
@@ -1172,6 +1299,10 @@ let () =
   test_d0_terminator ();
   test_background_priority ();
   test_sprites_respect_blanking ();
+  test_colour_expansion ();
+  test_sprite_palette_reaches_the_framebuffer ();
+  test_frame_size_follows_the_mode ();
+  test_a_whole_frame_is_written ();
   print_newline ();
   if !failures = 0
   then print_endline "all VDP port tests passed"

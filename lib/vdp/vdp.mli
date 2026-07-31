@@ -45,6 +45,17 @@ val h_counter : t -> uint8
 (** Completed frames. The host watches this to know when to put a picture up. *)
 val frame_count : t -> int
 
+(** The active display: three bytes per pixel, red first, top row first. The
+    buffer is sized for the tallest mode and written as each line is drawn,
+    so reading it mid-frame gives a torn picture -- wait on [frame_count].
+
+    Not a copy. The host is expected to blit it, not keep it. *)
+val framebuffer : t -> Bytes.t
+
+(** Width and height of the live part of [framebuffer], in pixels. Height
+    follows the display mode, so it changes when a program writes R0 or R1. *)
+val frame_size : t -> int * int
+
 (** Direct access to state that is otherwise reachable only through the port
     protocol -- which is exactly the thing under test. *)
 module For_tests : sig
@@ -88,7 +99,6 @@ module For_tests : sig
     val hide_left_column : t -> bool
     val line_irq_enabled : t -> bool
     val shift_sprites : t -> bool
-    val mode4 : t -> bool
     val display_enabled : t -> bool
     val frame_irq_enabled : t -> bool
     val tall_sprites : t -> bool
@@ -97,7 +107,6 @@ module For_tests : sig
     val name_table_base : t -> int
     val sprite_attr_base : t -> int
     val sprite_pattern_base : t -> int
-    val backdrop_colour : t -> int
   end
   val set_flags : t -> vblank:bool -> overflow:bool -> collision:bool -> unit
   val set_line_pending : t -> bool -> unit

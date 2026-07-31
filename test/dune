@@ -25,3 +25,10 @@
  (name sst_runner)
  (modules sst_runner)
  (libraries sandbox yojson))
+
+; Renders one synthetic frame to a PPM. Eyeball check, not an assertion suite.
+
+(executable
+ (name vdp_frame)
+ (modules vdp_frame)
+ (libraries sandbox))

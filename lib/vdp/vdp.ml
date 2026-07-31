@@ -36,10 +36,26 @@ type t =
   ; bg_palette : int array (* 256, 0 = CRAM 0-15, 1 = CRAM 16-31 *)
   ; bg_priority : bool array (* 256, name table bit p *)
   ; sprite_index : int array (* 256, 0 = no sprite pixel here *)
+  ; (* CRAM expanded to packed 0xRRGGBB, rebuilt on every palette write so
+       the per-pixel path never does the arithmetic. *)
+    palette_rgb : int array (* 32, mirrors cram *)
+  ; (* The active display, three bytes per pixel, top row first. Sized for
+       the tallest mode; frame_size says how much of it is live. *)
+    framebuffer : Bytes.t
   }
 
 (* North American hardware only: 262 scanlines of 228 T-states each, so 59736
    T-states per frame, which against the 3.579545 MHz Z80 clock is 59.92 Hz.
+
+   The 262 is documented -- MacDonald's NTSC 256x192 breakdown is 192 active
+   + 24 bottom border + 3 bottom blanking + 3 vertical blanking + 13 top
+     blanking + 27 top border, and the 224-line row sums to 262 as well.
+
+   The 228 is not stated anywhere found. It is derived: the same document
+   gives 342 pixels per scanline, and the Z80 runs at two thirds of the VDP
+   pixel clock, so 342 * 2/3 = 228 exactly. The clock ratio is the only part
+   still resting on nothing quotable.
+
    A PAL machine keeps the 228-cycle line and has 313 of them; nothing else
    about the chip changes, so should it ever be wanted it is this constant
    and the V counter table below. *)
@@ -73,7 +89,6 @@ let hscroll_lock t =
 let hide_left_column t = r t 0 land 0x20 <> 0
 let line_irq_enabled t = r t 0 land 0x10 <> 0 (* IE1 *)
 let shift_sprites t = r t 0 land 0x08 <> 0 (* EC: sprites move left 8px *)
-let mode4 t = r t 0 land 0x04 <> 0
 
 (* R1 *)
 let display_enabled t = r t 1 land 0x40 <> 0 (* BLK *)
@@ -126,9 +141,29 @@ let sprite_pattern_base t =
   (r t 6 land 0x04) lsl 11 (* bit 2: $0000 or $2000 *)
 ;;
 
-(* The backdrop is picked from the *sprite* half of CRAM, not the background
-   half -- the one place a background-ish colour comes from entries 16-31. *)
-let backdrop_colour t = 16 + (r t 7 land 0x0F)
+(* --- colour ------------------------------------------------------------
+
+   "The Master System color RAM consists of 32 bytes organized as two
+   16-color palettes", each entry laid out
+
+   MSB LSB --BBGGRR
+
+   "Background patterns can use either palette, while sprite patterns can
+   only use the second one."
+
+   How those two bits become an output level is NOT in the document. The even
+   spread -- n * 255 / 3, giving 0, 85, 170, 255 -- is the conventional
+   choice and the only one that puts 0 at black and 3 at full white; it is an
+   assumption all the same. *)
+
+let expand2 v = v * 85
+
+let cram_rgb entry =
+  let red = expand2 (entry land 3)
+  and green = expand2 ((entry lsr 2) land 3)
+  and blue = expand2 ((entry lsr 4) land 3) in
+  (red lsl 16) lor (green lsl 8) lor blue
+;;
 
 (* Power-on values, from the Mark III software reference manual. *)
 let initial_registers =
@@ -168,6 +203,8 @@ let create () =
   ; bg_palette = Array.make 256 0
   ; bg_priority = Array.make 256 false
   ; sprite_index = Array.make 256 0
+  ; palette_rgb = Array.make 0x20 0 (* CRAM powers on all zero, so black *)
+  ; framebuffer = Bytes.make (256 * 240 * 3) '\000'
   }
 ;;
 
@@ -241,7 +278,10 @@ let write_data t byte =
   let byte = Uint8.to_int byte in
   t.latch <- None;
   if t.code = 3
-  then t.cram.(t.address land 0x1F) <- byte
+  then (
+    let entry = t.address land 0x1F in
+    t.cram.(entry) <- byte;
+    t.palette_rgb.(entry) <- cram_rgb byte)
   else Bytes.set t.vram t.address (Char.chr byte);
   t.read_buffer <- byte;
   t.address <- (t.address + 1) land 0x3FFF
@@ -344,43 +384,40 @@ let fill_with_backdrop t ~from ~until =
 let render_background t =
   let line = t.line in
   let base = name_table_base t in
-  begin
-    (* "In 192-line mode the vertical scroll register wraps past 223"; the
-       taller modes wrap past 255. That is the tilemap being 28 rows tall
-       rather than 32. *)
-    let map_height = if active_lines t = 192 then 224 else 256 in
-    (* "If bit #6 of VDP register $00 is set, horizontal scrolling will be
-       fixed at zero for scanlines zero through 15." *)
-    let hscroll = if hscroll_lock t && line < 16 then 0 else r t 8 in
-    for x = 0 to 255 do
-      (* "If bit 7 of register $00 is set, the vertical scroll value will be
-         fixed to zero when columns 24 to 31 are rendered." Columns 24-31 are
-         screen pixels 192-255. *)
-      let vscroll = if vscroll_lock t && x >= 192 then 0 else t.vscroll in
-      (* R8 shifts the picture right, so the source moves left. MacDonald
-         describes this as a starting column of 32 minus the register's top
-         five bits plus a three-bit fine offset; subtracting the whole
-         register from the pixel and wrapping at 256 is the same thing with
-         the column and the fine part not pulled apart. *)
-      let src_x = (x - hscroll) land 0xFF in
-      let src_y = (line + vscroll) mod map_height in
-      let entry = base + ((((src_y lsr 3) * 32) + (src_x lsr 3)) * 2) in
-      (* ---pcvhnnnnnnnnn, little endian. *)
-      let lo = vram t entry
-      and hi = vram t (entry + 1) in
-      let tile = ((hi land 0x01) lsl 8) lor lo in
-      let hflip = hi land 0x02 <> 0
-      and vflip = hi land 0x04 <> 0 in
-      let row = src_y land 7
-      and col = src_x land 7 in
-      let row = if vflip then 7 - row else row
-      and col = if hflip then 7 - col else col in
-      t.bg_index.(x)
-        <- pattern_pixel t ~addr:((tile * 32) + (row * 4)) ~x:col;
-      t.bg_palette.(x) <- (hi lsr 3) land 1;
-      t.bg_priority.(x) <- hi land 0x10 <> 0
-    done
-  end
+  (* "In 192-line mode the vertical scroll register wraps past 223"; the
+     taller modes wrap past 255. That is the tilemap being 28 rows tall
+     rather than 32. *)
+  let map_height = if active_lines t = 192 then 224 else 256 in
+  (* "If bit #6 of VDP register $00 is set, horizontal scrolling will be
+     fixed at zero for scanlines zero through 15." *)
+  let hscroll = if hscroll_lock t && line < 16 then 0 else r t 8 in
+  for x = 0 to 255 do
+    (* "If bit 7 of register $00 is set, the vertical scroll value will be
+       fixed to zero when columns 24 to 31 are rendered." Columns 24-31 are
+       screen pixels 192-255. *)
+    let vscroll = if vscroll_lock t && x >= 192 then 0 else t.vscroll in
+    (* R8 shifts the picture right, so the source moves left. MacDonald
+       describes this as a starting column of 32 minus the register's top
+       five bits plus a three-bit fine offset; subtracting the whole register
+       from the pixel and wrapping at 256 is the same thing with the column
+       and the fine part not pulled apart. *)
+    let src_x = (x - hscroll) land 0xFF in
+    let src_y = (line + vscroll) mod map_height in
+    let entry = base + ((((src_y lsr 3) * 32) + (src_x lsr 3)) * 2) in
+    (* ---pcvhnnnnnnnnn, little endian. *)
+    let lo = vram t entry
+    and hi = vram t (entry + 1) in
+    let tile = ((hi land 0x01) lsl 8) lor lo in
+    let hflip = hi land 0x02 <> 0
+    and vflip = hi land 0x04 <> 0 in
+    let row = src_y land 7
+    and col = src_x land 7 in
+    let row = if vflip then 7 - row else row
+    and col = if hflip then 7 - col else col in
+    t.bg_index.(x) <- pattern_pixel t ~addr:((tile * 32) + (row * 4)) ~x:col;
+    t.bg_palette.(x) <- (hi lsr 3) land 1;
+    t.bg_priority.(x) <- hi land 0x10 <> 0
+  done
 ;;
 
 (* --- the sprite renderer -----------------------------------------------
@@ -388,13 +425,12 @@ let render_background t =
    "Each sprite is defined in the sprite attribute table (SAT), a 256-byte
    table located in VRAM", holding 64 sprites laid out as
 
-     00: yyyyyyyyyyyyyyyy   y = Y coordinate + 1
-     ...
-     80: xnxnxnxnxnxnxnxn   x = X coordinate, n = pattern index
+   00: yyyyyyyyyyyyyyyy y = Y coordinate + 1 ... 80: xnxnxnxnxnxnxnxn x = X
+   coordinate, n = pattern index
 
-   so sprite i has its Y at base+i and its X and pattern index at
-   base+$80+2i and base+$80+2i+1. The $40-$7F gap is unused and some games
-   store their own data there.
+   so sprite i has its Y at base+i and its X and pattern index at base+$80+2i
+   and base+$80+2i+1. The $40-$7F gap is unused and some games store their
+   own data there.
 
    That colour 0 is transparent is NOT stated anywhere in MacDonald's
    document. It is assumed here, on the strength of the collision and
@@ -417,9 +453,9 @@ let draw_sprite t ~sprite ~row =
   let zoom = zoom_sprites t in
   let row = if zoom then row / 2 else row in
   (* "When bit 1 of register #1 is set, bit 0 of the pattern index is
-     ignored... the same pattern index plus one is used for the bottom
-     half." Rows 8-15 give a row offset past 32 bytes, so the address walks
-     into the next pattern on its own. *)
+     ignored... the same pattern index plus one is used for the bottom half."
+     Rows 8-15 give a row offset past 32 bytes, so the address walks into the
+     next pattern on its own. *)
   let pattern = if tall_sprites t then pattern land 0xFE else pattern in
   let addr = sprite_pattern_base t + (pattern * 32) + (row * 4) in
   let width = if zoom then 2 else 1 in
@@ -466,17 +502,50 @@ let render_sprites t =
       if row >= 0 && row < height
       then
         if !drawn = 8
-        then
+        then (
           (* "If all eight buffer entries have been used and there are more
              sprites that fall on the same line, bit 6 of the status flags is
-             set" -- "regardless of the sprite X coordinate or pattern
-             data", so this is decided before anything is fetched. *)
-          (t.overflow <- true;
-           stop := true)
+             set" -- "regardless of the sprite X coordinate or pattern data",
+             so this is decided before anything is fetched. *)
+          t.overflow <- true;
+          stop := true)
         else (
           incr drawn;
           draw_sprite t ~sprite:!sprite ~row);
       incr sprite)
+  done
+;;
+
+(* The finished pixel, as an index into CRAM's 32 entries.
+
+   "The resulting sprite pixel is printed over any low priority background
+   tile. Or, for high priority background tiles, only where there is a
+   transparent pixel." Sprite colours "are always taken from the second group
+   of 16 colors in the color RAM". *)
+let composite t x =
+  let sprite = t.sprite_index.(x) in
+  if sprite <> 0 && not (t.bg_priority.(x) && t.bg_index.(x) <> 0)
+  then 16 + sprite
+  else (t.bg_palette.(x) * 16) + t.bg_index.(x)
+;;
+
+(* Resolve the line into the framebuffer. Three bytes per pixel, top row
+   first, which is the layout a PPM wants and the one every host toolkit can
+   take without rearranging. *)
+let emit t =
+  let row = t.line * 256 * 3 in
+  for x = 0 to 255 do
+    let rgb = t.palette_rgb.(composite t x) in
+    let at = row + (x * 3) in
+    Bytes.unsafe_set
+      t.framebuffer
+      at
+      (Char.unsafe_chr ((rgb lsr 16) land 0xFF));
+    Bytes.unsafe_set
+      t.framebuffer
+      (at + 1)
+      (Char.unsafe_chr ((rgb lsr 8) land 0xFF));
+    Bytes.unsafe_set t.framebuffer (at + 2) (Char.unsafe_chr (rgb land 0xFF))
   done
 ;;
 
@@ -494,21 +563,12 @@ let render_line t =
     if hide_left_column t
     then (
       fill_with_backdrop t ~from:0 ~until:7;
-      Array.fill t.sprite_index 0 8 0))
+      Array.fill t.sprite_index 0 8 0));
+  emit t
 ;;
 
-(* The finished pixel, as an index into CRAM's 32 entries.
-
-   "The resulting sprite pixel is printed over any low priority background
-   tile. Or, for high priority background tiles, only where there is a
-   transparent pixel." Sprite colours "are always taken from the second
-   group of 16 colors in the color RAM". *)
-let composite t x =
-  let sprite = t.sprite_index.(x) in
-  if sprite <> 0 && not (t.bg_priority.(x) && t.bg_index.(x) <> 0)
-  then 16 + sprite
-  else (t.bg_palette.(x) * 16) + t.bg_index.(x)
-;;
+let framebuffer t = t.framebuffer
+let frame_size t = 256, active_lines t
 
 (* Everything that happens between one line and the next, in the order the
    chip does it. *)
@@ -611,7 +671,6 @@ module For_tests = struct
     let hide_left_column = hide_left_column
     let line_irq_enabled = line_irq_enabled
     let shift_sprites = shift_sprites
-    let mode4 = mode4
     let display_enabled = display_enabled
     let frame_irq_enabled = frame_irq_enabled
     let tall_sprites = tall_sprites
@@ -620,7 +679,6 @@ module For_tests = struct
     let name_table_base = name_table_base
     let sprite_attr_base = sprite_attr_base
     let sprite_pattern_base = sprite_pattern_base
-    let backdrop_colour = backdrop_colour
   end
 
   let set_flags t ~vblank ~overflow ~collision =
