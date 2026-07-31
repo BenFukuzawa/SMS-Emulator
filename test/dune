@@ -27,3 +27,9 @@
  (name io_bus_test)
  (modules io_bus_test)
  (libraries sandbox))
+
+; Joypad: SMS controller port A/B decoding + key mapping.
+(executable
+ (name joypad_test)
+ (modules joypad_test)
+ (libraries sandbox))
