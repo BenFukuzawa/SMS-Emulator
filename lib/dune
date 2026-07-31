@@ -1,7 +1,7 @@
 ; Peripherals are added here as they are finished. Still out of the build:
-; joypad, io_bus, psg, cartridge, machine, cart, memory_bus, ram.
-
-(dirs uints registers shared z80 vdp)
+; joypad, psg, machine, cart. io_bus is a functor over interface signatures
+; (in shared/), so it builds without the concrete peripherals.
+(dirs uints registers shared z80 vdp memory_bus cartridge ram io_bus)
 
 (include_subdirs unqualified)
 

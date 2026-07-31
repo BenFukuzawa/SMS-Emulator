@@ -32,3 +32,17 @@
  (name vdp_frame)
  (modules vdp_frame)
  (libraries sandbox))
+
+; Memory bus: Sega mapper + SMS memory map.
+
+(executable
+ (name mem_bus_test)
+ (modules mem_bus_test)
+ (libraries sandbox))
+
+; I/O bus: SMS port decoding, with stub peripherals.
+
+(executable
+ (name io_bus_test)
+ (modules io_bus_test)
+ (libraries sandbox))
