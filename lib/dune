@@ -1,8 +1,8 @@
-; CPU core + memory bus. The remaining SMS peripherals (vdp, joypad, psg,
-; machine, cart) are still work-in-progress and do not build; add their
-; directories here as they are finished. io_bus is a functor over interface
-; signatures (in shared/), so it builds without the concrete peripherals.
-(dirs uints registers shared z80 memory_bus cartridge ram io_bus)
+; CPU core + memory bus. The remaining SMS peripherals (vdp, psg, machine,
+; cart) are still work-in-progress and do not build; add their directories
+; here as they are finished. io_bus is a functor over interface signatures
+; (in shared/), so it builds without the concrete peripherals.
+(dirs uints registers shared z80 memory_bus cartridge ram io_bus joypad)
 
 (include_subdirs unqualified)
 
