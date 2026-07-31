@@ -1,8 +1,8 @@
-; Only the CPU core is compiled for now. The SMS peripherals (vdp, joypad,
-; io_bus, psg, cartridge, machine, cart, memory_bus, ram) are still
-; work-in-progress and do not build; add their directories back here as they
-; are finished. This lets ZEXALL/ZEXDOC exercise the CPU in isolation.
-(dirs uints registers shared z80)
+; CPU core + memory bus. The remaining SMS peripherals (vdp, joypad, psg,
+; machine, cart) are still work-in-progress and do not build; add their
+; directories here as they are finished. io_bus is a functor over interface
+; signatures (in shared/), so it builds without the concrete peripherals.
+(dirs uints registers shared z80 memory_bus cartridge ram io_bus)
 
 (include_subdirs unqualified)
 
