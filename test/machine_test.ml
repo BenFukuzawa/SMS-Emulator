@@ -33,6 +33,14 @@ let check name ~expect ~got =
     Printf.printf "  FAIL  %s: expected %d, got %d\n" name expect got)
 ;;
 
+let check_between name ~low ~high ~got =
+  if got >= low && got <= high
+  then Printf.printf "  PASS  %s (%d)\n" name got
+  else (
+    incr failures;
+    Printf.printf "  FAIL  %s: expected %d..%d, got %d\n" name low high got)
+;;
+
 (* --- 1. a picture ------------------------------------------------------- *)
 
 (* Leaves the display off, which makes every pixel the backdrop colour -- the
@@ -191,10 +199,50 @@ let test_joypad () =
   check "release_all clears port B" ~expect:0xFF ~got:(port_b ())
 ;;
 
+(* --- 4. sound comes out with the picture --------------------------------
+
+   The frontend schedules one AudioBuffer per frame back to back, so the
+   number of samples a frame yields is what its drift handling is built on:
+   59736 T-states at 3579545 Hz is 16.69 ms, or 736 samples at 44.1 kHz.
+   That is fractionally more than the 735 a 60 Hz display consumes, which is
+   exactly why the frontend has to be able to drop. *)
+let test_audio () =
+  print_endline "=== a frame's worth of sound ===";
+  let m = Machine.create ~rom:(rom_of [ 0x0000, backdrop_program ]) in
+  check "rate" ~expect:44100 ~got:(Machine.audio_rate m);
+  Machine.run_frame m;
+  let samples = Machine.audio m in
+  let n = Array.length samples in
+  (* 59736 T-states is 735.9 samples, so frames alternate between 735 and
+     736 and neither is the "right" answer on its own. *)
+  check_between "about a frame of samples" ~low:735 ~high:736 ~got:n;
+  check "taking empties the queue" ~expect:0 ~got:(Machine.audio_pending m);
+  (* This ROM never writes to the PSG, and a chip that powers up at full
+     volume would buzz through the whole game. *)
+  let loudest =
+    Array.fold_left (fun m s -> Float.max m (Float.abs s)) 0.0 samples
+  in
+  check "silent until written to" ~expect:0 ~got:(int_of_float (loudest *. 1e6));
+  (* Ten frames without draining must not accumulate ten frames of backlog
+     beyond the one-second cap. *)
+  for _ = 1 to 10 do
+    Machine.run_frame m
+  done;
+
+  check_between
+    "ten frames queue ten frames"
+    ~low:7350
+    ~high:7365
+    ~got:(Machine.audio_pending m);
+  Machine.drop_audio m;
+  check "drop_audio empties it" ~expect:0 ~got:(Machine.audio_pending m)
+;;
+
 let () =
   test_backdrop ();
   test_interrupts ();
   test_joypad ();
+  test_audio ();
   if !failures = 0
   then print_endline "\nmachine: ALL PASS"
   else (

@@ -34,6 +34,7 @@ module Cpu = Z80.Make (Mem) (Io)
 type t =
   { cpu : Cpu.t
   ; vdp : Vdp.t
+  ; psg : Psg.t
   ; joypad : Joypad.t
   ; bus : Mem.t
   }
@@ -52,7 +53,7 @@ let create ~rom =
   let joypad = Joypad.create () in
   let io = Io.create ~vdp ~psg ~joypad in
   let cpu = Cpu.create ~bus ~io ~registers:(Registers.create ()) in
-  { cpu; vdp; joypad; bus }
+  { cpu; vdp; psg; joypad; bus }
 ;;
 
 (* One frame is 262 lines of 228 cycles (vdp.ml). The bound is a backstop: an
@@ -77,10 +78,18 @@ let run_frame t =
     let cycles = Cpu.run_instruction t.cpu in
     spent := !spent + cycles;
     Vdp.step t.vdp ~cycles;
+    Psg.step t.psg ~cycles;
     Cpu.set_irq_line t.cpu (Vdp.irq t.vdp)
   done
 ;;
 
+(* Sound comes out in the same currency as the picture: one call per frame,
+   after run_frame, giving whatever the chip generated while that frame ran.
+   Roughly 735 samples at 44.1 kHz and 60 Hz. *)
+let audio t = Psg.take t.psg
+let audio_rate t = Psg.sample_rate t.psg
+let audio_pending t = Psg.pending t.psg
+let drop_audio t = Psg.drop t.psg
 let framebuffer t = Vdp.framebuffer t.vdp
 let frame_size t = Vdp.frame_size t.vdp
 let frame_count t = Vdp.frame_count t.vdp

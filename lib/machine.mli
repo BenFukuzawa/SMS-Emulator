@@ -33,6 +33,18 @@ val frame_size : t -> int * int
 (** Frames completed since power on. *)
 val frame_count : t -> int
 
+(** The sound generated while the last [run_frame] ran, in [-1.0, 1.0], and
+    the rate it is meant to be played back at. Around 735 samples a frame at
+    44.1 kHz. Taking them empties the queue, so call it once per frame. *)
+val audio : t -> float array
+
+val audio_rate : t -> int
+val audio_pending : t -> int
+
+(** Discard queued sound. For a host that has fallen behind and would rather
+    skip than play audio that is already late. *)
+val drop_audio : t -> unit
+
 (** The two controller ports, and a pad's inputs. Both are the joypad's own
     types, re-exported so a frontend can drive the machine without naming
     that module. Pause is not among the buttons -- see [pause].

@@ -40,11 +40,107 @@ let render m =
   ctx##putImageData img (Js.number_of_float 0.) (Js.number_of_float 0.)
 ;;
 
+(* --- audio ---------------------------------------------------------------
+
+   js_of_ocaml has no WebAudio binding, so this is all Js.Unsafe. The graph
+   is as small as it can be: one AudioBuffer per frame, scheduled back to
+   back, straight at the destination.
+
+   An AudioContext cannot be created before the user has interacted with the
+   page -- browsers refuse, silently -- so it is built inside the ROM
+   picker's handler rather than at start-up. *)
+
+let audio_ctx = ref None
+
+(* Where the sound already scheduled runs out, on the context's clock. *)
+let next_time = ref 0.0
+
+(* How far ahead of the clock to stay. Under about 50 ms a slow frame is
+   audible as a gap; over about 200 ms the sound lags the picture visibly. *)
+let lead = 0.08
+let max_ahead = 0.20
+
+let ensure_audio () =
+  match !audio_ctx with
+  | Some _ as c -> c
+  | None ->
+    let ctor : _ Js.optdef =
+      Js.Unsafe.get Js.Unsafe.global (Js.string "AudioContext")
+    in
+    (match Js.Optdef.to_option ctor with
+     | None -> None (* no WebAudio here; the picture still runs *)
+     | Some ctor ->
+       let c = Js.Unsafe.new_obj ctor [||] in
+       (* A context can still come up suspended; asking costs nothing. *)
+       ignore (Js.Unsafe.meth_call c "resume" [||]);
+       next_time := 0.0;
+       audio_ctx := Some c;
+       !audio_ctx)
+;;
+
+let now_of c : float = Js.Unsafe.get c (Js.string "currentTime")
+
+(* The buffer carries its own rate, so it is built at the PSG's 44.1 kHz
+   whatever the device is running at and WebAudio resamples. That is one
+   fewer thing to get wrong than matching the context's rate by hand. *)
+let queue c samples rate =
+  let n = Array.length samples in
+  if n > 0
+  then (
+    let buffer =
+      Js.Unsafe.meth_call
+        c
+        "createBuffer"
+        [| Js.Unsafe.inject 1
+         ; Js.Unsafe.inject n
+         ; Js.Unsafe.inject (float_of_int rate)
+        |]
+    in
+    let channel =
+      Js.Unsafe.meth_call buffer "getChannelData" [| Js.Unsafe.inject 0 |]
+    in
+    for i = 0 to n - 1 do
+      Js.Unsafe.set channel i samples.(i)
+    done;
+    let source = Js.Unsafe.meth_call c "createBufferSource" [||] in
+    Js.Unsafe.set source (Js.string "buffer") buffer;
+    ignore
+      (Js.Unsafe.meth_call
+         source
+         "connect"
+         [| Js.Unsafe.get c (Js.string "destination") |]);
+    let at = Float.max (now_of c +. lead) !next_time in
+    ignore (Js.Unsafe.meth_call source "start" [| Js.Unsafe.inject at |]);
+    next_time := at +. (float_of_int n /. float_of_int rate))
+;;
+
+(* requestAnimationFrame runs at the display's 60 Hz; the console runs at
+   59.92. So a frame's worth of samples is very slightly more than a frame's
+   worth of time, and the queue creeps forward by about a millisecond a
+   second -- a tenth of a second of lag every minute or two. Dropping a
+   frame of audio once the lead gets too big is what keeps it bounded.
+
+   The other direction is a stall: if the tab was in the background the
+   clock has run on without us, and the cursor has to be pulled forward or
+   everything queued afterwards is already late. *)
+let feed_audio m =
+  match !audio_ctx with
+  | None -> Machine.drop_audio m
+  | Some c ->
+    let now = now_of c in
+    if !next_time -. now > max_ahead
+    then Machine.drop_audio m
+    else (
+      if !next_time < now then next_time := now +. lead;
+      queue c (Machine.audio m) (Machine.audio_rate m))
+;;
+
 let rec loop _ =
   (match !machine with
    | Some m ->
      Machine.run_frame m;
-     render m
+     render m;
+     feed_audio m
    | None -> ());
   ignore (Dom_html.window##requestAnimationFrame (Js.wrap_callback loop))
 ;;
@@ -117,7 +213,13 @@ let install_toggle () =
 
 let start_rom bytes =
   machine := Some (Machine.create ~rom:bytes);
-  set_status (Printf.sprintf "running (%d KB)" (Bytes.length bytes / 1024))
+  (* Picking a file is the user gesture that lets an AudioContext exist. *)
+  let sound = ensure_audio () <> None in
+  set_status
+    (Printf.sprintf
+       "running (%d KB)%s"
+       (Bytes.length bytes / 1024)
+       (if sound then "" else " - no audio in this browser"))
 ;;
 
 let read_rom file =
