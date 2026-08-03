@@ -1,5 +1,7 @@
-; Browser frontend: the emulator core compiled to JS, drawing to a canvas.
-; Purely additive -- no lib/ changes. Build: dune build web/main.bc.js
+; Browser frontend: the emulator core compiled to JS, drawing to a canvas,
+; plus the debug panels that read the machine through Machine.For_debug and
+; Debug. Build: dune build web/main.bc.js
+
 (executable
  (name main)
  (modules main)
@@ -13,7 +15,7 @@
 
 ; `dune build @web/serve` materialises both the page and the compiled JS into
 ; _build/default/web/, so that directory can be served as-is.
+
 (alias
  (name serve)
  (deps index.html main.bc.js))
-

@@ -36,6 +36,10 @@ type t =
   ; vdp : Vdp.t
   ; joypad : Joypad.t
   ; bus : Mem.t
+  ; (* The board has no use for the cartridge once it is wired to the bus. It
+       is kept only so [For_debug] can read the mapper's page registers,
+       which are the one part of the cart not reachable through [Mem]. *)
+    cartridge : Cartridge.t
   }
 
 let create ~rom =
@@ -52,7 +56,7 @@ let create ~rom =
   let joypad = Joypad.create () in
   let io = Io.create ~vdp ~psg ~joypad in
   let cpu = Cpu.create ~bus ~io ~registers:(Registers.create ()) in
-  { cpu; vdp; joypad; bus }
+  { cpu; vdp; joypad; bus; cartridge }
 ;;
 
 (* One frame is 262 lines of 228 cycles (vdp.ml). The bound is a backstop: an
@@ -70,14 +74,29 @@ let max_cycles_per_frame = 262 * 228 * 4
    is level triggered -- the VDP holds it high until the program reads the
    status port -- so a single check after an instruction that raised it would
    miss the moment it drops. *)
+let step t =
+  let cycles = Cpu.run_instruction t.cpu in
+  Vdp.step t.vdp ~cycles;
+  Cpu.set_irq_line t.cpu (Vdp.irq t.vdp);
+  cycles
+;;
+
 let run_frame t =
   let start = Vdp.frame_count t.vdp in
   let spent = ref 0 in
   while Vdp.frame_count t.vdp = start && !spent < max_cycles_per_frame do
-    let cycles = Cpu.run_instruction t.cpu in
-    spent := !spent + cycles;
-    Vdp.step t.vdp ~cycles;
-    Cpu.set_irq_line t.cpu (Vdp.irq t.vdp)
+    spent := !spent + step t
+  done
+;;
+
+(* Same backstop as [run_frame], scaled to one line's worth of cycles. A
+   scanline is 228 T-states, so the multiplier leaves room for an instruction
+   that straddles the boundary without letting a zero-cycle instruction spin. *)
+let step_scanline t =
+  let start = Vdp.For_tests.line t.vdp in
+  let spent = ref 0 in
+  while Vdp.For_tests.line t.vdp = start && !spent < 228 * 4 do
+    spent := !spent + step t
   done
 ;;
 
@@ -94,5 +113,28 @@ let pause t = Cpu.request_nmi t.cpu
 module For_tests = struct
   let read_byte t addr =
     Uint8.to_int (Mem.read_byte t.bus (Uint16.of_int addr))
+  ;;
+end
+
+(* Everything an out-of-band observer needs, and nothing it could change
+   with. Reads only: [Mem.read_byte] has no side effects (the mapper snoops
+   the write path, not the read path), so a debugger walking memory cannot
+   perturb the run it is describing.
+
+   Separate from [For_tests] because the two have different obligations. A
+   test peephole may be narrowed whenever the test that wanted it goes away;
+   this is a surface a frontend is built on. *)
+module For_debug = struct
+  let read_byte = For_tests.read_byte
+  let vdp t = t.vdp
+  let registers t = Cpu.For_tests.registers t.cpu
+  let pc t = Uint16.to_int (Cpu.For_tests.pc t.cpu)
+  let mapper_pages t = Cartridge.pages t.cartridge
+
+  let interrupt_state t =
+    let iff1, iff2, im, i, refresh, halted =
+      Cpu.For_tests.interrupt_state t.cpu
+    in
+    iff1, iff2, im, Uint8.to_int i, Uint8.to_int refresh, halted
   ;;
 end

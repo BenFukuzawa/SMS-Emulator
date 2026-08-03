@@ -4,31 +4,333 @@
 <meta charset="utf-8">
 <title>SMS Emulator</title>
 <style>
-  body { background:#111; color:#eee; font-family:sans-serif; text-align:center; margin:24px; }
-  h1 { font-weight:600; }
-  #screen {
-    image-rendering: pixelated;
-    width: 512px; height: 384px;   /* 256x192 scaled 2x */
-    background:#000; border:1px solid #444;
-  }
-  #controls { margin:12px; }
-  #status { margin-left:12px; color:#8f8; }
-  .keys { color:#aaa; font-size:13px; margin-top:10px; }
+/* Accents are colours the Master System can actually make: the VDP stores
+   two bits per channel, so every level is one of 00/55/AA/FF. The grounds
+   are not -- a background needs finer steps than the hardware had. */
+:root {
+  --amber: #FFAA00;   /* the program counter                        */
+  --cyan:  #55AAFF;   /* addresses, resolved jump targets           */
+  --green: #00AA55;   /* running, panel on                          */
+  --red:   #FF5555;   /* halted, bytes that are not an instruction  */
+
+  --bg:    #0E1014;
+  --panel: #171A21;
+  --hd:    #1D212A;
+  --line:  #272C37;
+  --ink:   #DFE3EB;
+  --dim:   #8B93A3;
+  --faint: #5B6373;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --scale: 2;         /* integer only -- see #screen */
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--mono); font-size: 13px; line-height: 1.45;
+}
+.wrap { max-width: 1500px; margin: 0 auto; padding: 18px 20px 48px; }
+
+header {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px;
+  padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--line);
+}
+h1 { font-family: var(--sans); font-size: 15px; font-weight: 600; margin: 0; }
+#controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#status { color: var(--green); font-size: 12px; }
+.keys { font-family: var(--sans); font-size: 11.5px; color: var(--faint); }
+.keys b { color: var(--dim); font-weight: 600; }
+
+/* ── stage: the game is pinned, panels scroll beside it ─────────────── */
+
+.stage {
+  display: grid; gap: 14px; align-items: start;
+  grid-template-columns: max-content minmax(320px, 1fr);
+}
+.game-col { position: sticky; top: 14px; }
+.panels {
+  display: grid; gap: 14px; align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+}
+body.nodebug .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+body.nodebug .panels { display: none; }
+
+@media (max-width: 1080px) {
+  .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .game-col { position: static; }
+  .panels { width: 100%; }
+}
+
+/* ── the screen ──────────────────────────────────────────────────────
+   Integer scaling only. Stretching 256 pixels to a fractional width
+   duplicates some columns and not others, which on pixel art shows up as
+   shimmer along every vertical edge. The canvas takes an exact multiple
+   and the panel sizes itself to fit, not the other way round. */
+
+#screen {
+  image-rendering: pixelated; display: block;
+  width:  calc(256px * var(--scale));
+  height: calc(192px * var(--scale));
+  background: #000; border: 1px solid var(--line); border-radius: 2px;
+}
+
+/* ── panels ──────────────────────────────────────────────────────────── */
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.panel-hd {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px 7px 12px; background: var(--hd); border-bottom: 1px solid var(--line);
+}
+.panel-hd h2 {
+  font-family: var(--sans); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.11em; text-transform: uppercase; color: var(--dim);
+  margin: 0; flex: 1; white-space: nowrap;
+}
+.panel-bd { padding: 12px; }
+.panel.off .panel-bd { display: none; }
+.panel.off { opacity: 0.62; }
+.off-note { padding: 9px 12px; font-family: var(--sans); font-size: 11.5px; color: var(--faint); display: none; margin: 0; }
+.panel.off .off-note { display: block; }
+
+.cost {
+  font-family: var(--sans); font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px; border: 1px solid currentColor; white-space: nowrap;
+}
+.cost.free { color: var(--green); }
+.cost.mid { color: var(--amber); }
+.cost.heavy { color: var(--red); }
+
+/* ── switch ──────────────────────────────────────────────────────────── */
+
+.sw { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+.sw .track { width: 30px; height: 17px; flex: none; border-radius: 9px; background: var(--line); position: relative; transition: background 120ms ease; }
+.sw .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--dim); transition: transform 120ms ease, background 120ms ease; }
+.sw input:checked + .track { background: #1d4a33; }
+.sw input:checked + .track::after { transform: translateX(13px); background: var(--green); }
+.sw input:focus-visible + .track { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.sw .txt { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.sw input:checked ~ .txt { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .sw .track, .sw .track::after { transition: none; } }
+
+/* ── buttons ─────────────────────────────────────────────────────────── */
+
+button, input[type=file]::file-selector-button {
+  font-family: var(--sans); font-size: 11.5px; font-weight: 600; color: var(--ink);
+  background: var(--hd); border: 1px solid var(--line); border-radius: 3px;
+  padding: 6px 13px; cursor: pointer;
+}
+button:hover { border-color: var(--faint); }
+button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+button[data-on="true"] { color: var(--amber); border-color: var(--amber); }
+.transport { display: flex; gap: 7px; margin-top: 11px; flex-wrap: wrap; }
+.scales { display: flex; gap: 3px; }
+.scales button { padding: 3px 8px; font-size: 10.5px; }
+
+.game-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+}
+.fps { display: flex; align-items: baseline; gap: 6px; }
+#fps { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--green); min-width: 2.6ch; text-align: right; }
+#fps.warn { color: var(--amber); }
+#fps.bad { color: var(--red); }
+.fps-label { font-family: var(--sans); font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); }
+
+/* ── cpu ─────────────────────────────────────────────────────────────── */
+
+.regs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 5px 16px; font-variant-numeric: tabular-nums; }
+.reg { display: flex; gap: 8px; align-items: baseline; }
+.reg .k { color: var(--faint); width: 2.4ch; flex: none; }
+.reg .v { font-size: 14px; }
+.reg.pc .v { color: var(--cyan); }
+.reg-foot { display: flex; gap: 20px; flex-wrap: wrap; align-items: baseline; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.reg-foot .k { color: var(--faint); }
+#flags { letter-spacing: 0.22em; font-size: 14px; }
+#flags i { font-style: normal; color: var(--faint); }
+#flags i.set { color: var(--cyan); font-weight: 600; }
+#banks { color: var(--dim); }
+#banks b { color: var(--ink); font-weight: 600; }
+
+/* ── disassembly ─────────────────────────────────────────────────────── */
+
+.dis-scroll { overflow-x: auto; }
+#disasm { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.dis-row { display: grid; grid-template-columns: 5ch 9ch 1fr; gap: 12px; padding: 2px 8px; border-radius: 2px; white-space: nowrap; }
+.dis-row .a { color: var(--faint); }
+.dis-row .b { color: var(--faint); font-size: 11.5px; }
+.dis-row.cur { background: rgba(255,170,0,0.15); }
+.dis-row.cur .a, .dis-row.cur .t { color: var(--amber); font-weight: 600; }
+.dis-row.data .t { color: var(--red); }
+.dis-row .t em { font-style: normal; color: var(--cyan); }
+
+/* ── canvases ────────────────────────────────────────────────────────── */
+
+canvas.sheet { image-rendering: pixelated; display: block; width: 100%; background: #000; border: 1px solid var(--line); border-radius: 2px; }
+#vram { aspect-ratio: 256 / 128; }
+#tmap { aspect-ratio: 256 / 224; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-family: var(--sans); font-size: 11px; color: var(--faint); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chip { width: 9px; height: 9px; border-radius: 1px; flex: none; }
+
+/* ── cram ────────────────────────────────────────────────────────────── */
+
+.cram { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; }
+.cram i { display: block; aspect-ratio: 1; border-radius: 1px; }
+.cram-lab { font-family: var(--sans); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 9px 0 4px; }
+.cram-lab:first-of-type { margin-top: 0; }
+
+/* ── sprites ─────────────────────────────────────────────────────────── */
+
+#sprites { font-variant-numeric: tabular-nums; max-height: 260px; overflow-y: auto; }
+.spr-row { display: grid; grid-template-columns: 3ch 1fr 1fr 1fr; gap: 9px; padding: 1px 0; white-space: nowrap; }
+.spr-row .i { color: var(--faint); }
+.spr-row.term { color: var(--red); }
+.spr-row.term .rest { grid-column: 2 / -1; font-style: italic; }
+.spr-hd { color: var(--faint); font-size: 11px; padding-bottom: 5px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
 </style>
 </head>
 <body>
+<div class="wrap">
+
+<header>
   <h1>Sega Master System</h1>
   <div id="controls">
     <input type="file" id="rom" accept=".sms">
-    <label><input type="checkbox" id="twoplayer"> 2 players</label>
+    <label class="sw"><input type="checkbox" id="twoplayer"><span class="track"></span><span class="txt">2 players</span></label>
     <span id="status">load a .sms ROM</span>
   </div>
-  <canvas id="screen" width="256" height="192"></canvas>
   <div class="keys">
-    1P: <b>WASD</b> + <b>J</b>/<b>K</b> &nbsp;|&nbsp;
-    2P: P1 <b>WASD</b>+<b>Z</b>/<b>X</b>, P2 <b>IJKL</b>+<b>N</b>/<b>M</b> &nbsp;|&nbsp;
-    Pause: <b>P</b>
+    1P <b>WASD</b>+<b>J</b>/<b>K</b> &nbsp; 2P <b>WASD</b>+<b>Z</b>/<b>X</b>, <b>IJKL</b>+<b>N</b>/<b>M</b> &nbsp; Pause <b>P</b> &nbsp; Debug <b>`</b>
   </div>
-  <script src="main.bc.js"></script>
+</header>
+
+<div class="stage">
+
+  <div class="game-col">
+    <section class="panel">
+      <div class="panel-hd">
+        <h2>Screen</h2>
+        <div class="scales" id="scales">
+          <button data-scale="1">1&times;</button>
+          <button data-scale="2" data-on="true">2&times;</button>
+          <button data-scale="3">3&times;</button>
+        </div>
+      </div>
+      <div class="panel-bd">
+        <canvas id="screen" width="256" height="192"></canvas>
+        <div class="transport">
+          <button id="run" data-on="false">Pause</button>
+          <button id="step">Step</button>
+          <button id="line">Scanline</button>
+          <button id="frame">Frame</button>
+        </div>
+        <div class="game-foot">
+          <div class="fps"><span id="fps">&mdash;</span><span class="fps-label">fps</span></div>
+          <label class="sw"><input type="checkbox" id="master"><span class="track"></span><span class="txt">Debug view</span></label>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="panels">
+
+    <section class="panel" data-panel="cpu">
+      <div class="panel-hd">
+        <h2>CPU</h2><span class="cost free">cheap</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="cpu"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <div class="regs" id="regs"></div>
+        <div class="reg-foot">
+          <div><span class="k">F</span> <span id="flags"></span></div>
+          <div><span class="k">IFF1</span> <span id="iff">&mdash;</span></div>
+          <div><span class="k">IM</span> <span id="im">&mdash;</span></div>
+          <div><span class="k">line</span> <span id="scan">&mdash;</span></div>
+        </div>
+        <div class="reg-foot"><span class="k">ROM</span> <span id="banks">&mdash;</span></div>
+      </div>
+      <p class="off-note">Off &mdash; register reads skipped.</p>
+    </section>
+
+    <section class="panel" data-panel="dis">
+      <div class="panel-hd">
+        <h2>Disassembly</h2><span class="cost free">cheap</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="dis"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <div class="dis-scroll"><div id="disasm"></div></div>
+        <div class="legend">
+          <span><span class="chip" style="background:var(--amber)"></span>PC</span>
+          <span><span class="chip" style="background:var(--cyan)"></span>resolved target</span>
+          <span><span class="chip" style="background:var(--red)"></span>not an instruction</span>
+        </div>
+      </div>
+      <p class="off-note">Off &mdash; no decoding ahead of PC.</p>
+    </section>
+
+    <section class="panel" data-panel="vram">
+      <div class="panel-hd">
+        <h2>VRAM tiles</h2><span class="cost heavy">heavy</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="vram"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <canvas id="vram" class="sheet" width="256" height="128"></canvas>
+        <div class="legend">
+          <span>512 patterns &middot; palette</span>
+          <span><button id="palette" style="padding:2px 8px;font-size:10.5px">background</button></span>
+        </div>
+      </div>
+      <p class="off-note">Off &mdash; the tile sheet is not decoded.</p>
+    </section>
+
+    <section class="panel" data-panel="tmap">
+      <div class="panel-hd">
+        <h2>Tilemap</h2><span class="cost heavy">heavy</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="tmap"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <canvas id="tmap" class="sheet" width="256" height="224"></canvas>
+        <div class="legend"><span><span class="chip" style="background:var(--amber)"></span>visible viewport (R8, R9)</span></div>
+      </div>
+      <p class="off-note">Off &mdash; the name table is not walked.</p>
+    </section>
+
+    <section class="panel" data-panel="cram">
+      <div class="panel-hd">
+        <h2>CRAM</h2><span class="cost free">cheap</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="cram"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <p class="cram-lab">0&ndash;15 &middot; background</p>
+        <div class="cram" id="cram0"></div>
+        <p class="cram-lab">16&ndash;31 &middot; sprites &amp; backdrop</p>
+        <div class="cram" id="cram1"></div>
+      </div>
+      <p class="off-note">Off.</p>
+    </section>
+
+    <section class="panel" data-panel="spr">
+      <div class="panel-hd">
+        <h2>Sprites</h2><span class="cost mid">moderate</span>
+        <label class="sw"><input type="checkbox" checked data-toggle="spr"><span class="track"></span></label>
+      </div>
+      <div class="panel-bd">
+        <div class="spr-row spr-hd"><span>#</span><span>y</span><span>x</span><span>tile</span></div>
+        <div id="sprites"></div>
+      </div>
+      <p class="off-note">Off &mdash; the sprite attribute table is not read.</p>
+    </section>
+
+  </div>
+</div>
+
+</div>
+<script src="main.bc.js"></script>
 </body>
 </html>
