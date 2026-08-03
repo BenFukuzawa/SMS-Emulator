@@ -1,5 +1,3 @@
-open! Core
-open! Async
 open Uints
 
 module type S = sig

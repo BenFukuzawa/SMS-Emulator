@@ -1,0 +1,19 @@
+; Browser frontend: the emulator core compiled to JS, drawing to a canvas.
+; Purely additive -- no lib/ changes. Build: dune build web/main.bc.js
+(executable
+ (name main)
+ (modules main)
+ (modes js)
+ (libraries sandbox js_of_ocaml)
+ (preprocess
+  (pps js_of_ocaml-ppx))
+ (js_of_ocaml
+  (flags
+   (:standard --effects=cps))))
+
+; `dune build @web/serve` materialises both the page and the compiled JS into
+; _build/default/web/, so that directory can be served as-is.
+(alias
+ (name serve)
+ (deps index.html main.bc.js))
+

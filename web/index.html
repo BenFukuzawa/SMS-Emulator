@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SMS Emulator</title>
+<style>
+  body { background:#111; color:#eee; font-family:sans-serif; text-align:center; margin:24px; }
+  h1 { font-weight:600; }
+  #screen {
+    image-rendering: pixelated;
+    width: 512px; height: 384px;   /* 256x192 scaled 2x */
+    background:#000; border:1px solid #444;
+  }
+  #controls { margin:12px; }
+  #status { margin-left:12px; color:#8f8; }
+  .keys { color:#aaa; font-size:13px; margin-top:10px; }
+</style>
+</head>
+<body>
+  <h1>Sega Master System</h1>
+  <div id="controls">
+    <input type="file" id="rom" accept=".sms">
+    <label><input type="checkbox" id="twoplayer"> 2 players</label>
+    <span id="status">load a .sms ROM</span>
+  </div>
+  <canvas id="screen" width="256" height="192"></canvas>
+  <div class="keys">
+    1P: <b>WASD</b> + <b>J</b>/<b>K</b> &nbsp;|&nbsp;
+    2P: P1 <b>WASD</b>+<b>Z</b>/<b>X</b>, P2 <b>IJKL</b>+<b>N</b>/<b>M</b> &nbsp;|&nbsp;
+    Pause: <b>P</b>
+  </div>
+  <script src="main.bc.js"></script>
+</body>
+</html>
