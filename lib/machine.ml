@@ -57,7 +57,7 @@ let create ~rom =
   let joypad = Joypad.create () in
   let io = Io.create ~vdp ~psg ~joypad in
   let cpu = Cpu.create ~bus ~io ~registers:(Registers.create ()) in
-  { cpu; vdp; joypad; bus; cartridge }
+  { cpu; vdp; psg; joypad; bus; cartridge }
 ;;
 
 (* One frame is 262 lines of 228 cycles (vdp.ml). The bound is a backstop: an
@@ -78,6 +78,7 @@ let max_cycles_per_frame = 262 * 228 * 4
 let step t =
   let cycles = Cpu.run_instruction t.cpu in
   Vdp.step t.vdp ~cycles;
+  Psg.step t.psg ~cycles;
   Cpu.set_irq_line t.cpu (Vdp.irq t.vdp);
   cycles
 ;;
@@ -98,11 +99,6 @@ let step_scanline t =
   let spent = ref 0 in
   while Vdp.For_tests.line t.vdp = start && !spent < 228 * 4 do
     spent := !spent + step t
-    let cycles = Cpu.run_instruction t.cpu in
-    spent := !spent + cycles;
-    Vdp.step t.vdp ~cycles;
-    Psg.step t.psg ~cycles;
-    Cpu.set_irq_line t.cpu (Vdp.irq t.vdp)
   done
 ;;
 
