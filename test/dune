@@ -73,6 +73,8 @@
 (executable
  (name debug_test)
  (modules debug_test)
+ (libraries sandbox))
+
 ; PSG: the SN76489 write protocol, tone frequencies, noise and mixing.
 
 (executable
@@ -85,4 +87,11 @@
 (executable
  (name psg_wav)
  (modules psg_wav)
+ (libraries sandbox))
+
+; Boots a real ROM and checks picture, sound and the debug view together.
+
+(executable
+ (name smoke)
+ (modules smoke)
  (libraries sandbox))
