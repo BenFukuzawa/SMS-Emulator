@@ -14,7 +14,8 @@
  ram
  io_bus
  psg
- joypad)
+ joypad
+ debug)
 
 (include_subdirs unqualified)
 

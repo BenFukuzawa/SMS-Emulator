@@ -19,6 +19,18 @@ val create : rom:bytes -> t
     instruction left off. *)
 val run_frame : t -> unit
 
+(** One instruction, or one interrupt if one is pending, with the VDP
+    advanced by exactly the T-states it cost. Returns that count. This is the
+    unit [run_frame] is built from, exposed so a debugger can advance the
+    machine by less than a frame. The picture is torn until the frame
+    finishes -- see [framebuffer]. *)
+val step : t -> int
+
+(** Run until the VDP moves to the next scanline. The useful granularity for
+    watching a raster effect: mid-frame register writes are what make the
+    status bar hold still while the level scrolls under it. *)
+val step_scanline : t -> unit
+
 (** The finished picture: three bytes per pixel, red first, top row first.
     Not a copy -- blit it, do not keep it. Call after [run_frame], never
     during, or the top and bottom of the image will come from different
@@ -80,4 +92,34 @@ module For_tests : sig
       watching what a ROM left behind, which is otherwise invisible from
       outside the machine. *)
   val read_byte : t -> int -> int
+end
+
+(** What a debugger needs to see, and nothing it could change with.
+
+    Every function here reads. [Mem.read_byte] has no side effects -- the
+    mapper snoops writes, not reads -- so walking memory from outside cannot
+    perturb the run being described. That property is what makes a live
+    inspection view safe to point at a running game.
+
+    Kept apart from [For_tests] because the two carry different promises. A
+    test peephole may be narrowed the moment its test goes away; this is a
+    surface a frontend is built on. *)
+module For_debug : sig
+  (** Read as the CPU would, through the mapper and the RAM mirror. *)
+  val read_byte : t -> int -> int
+
+  (** The video chip, for its own [For_tests] accessors: VRAM, CRAM, the
+      register file and the scanline counter. *)
+  val vdp : t -> Vdp.t
+
+  val registers : t -> Registers.t
+  val pc : t -> int
+
+  (** [iff1, iff2, im, i, refresh, halted]. *)
+  val interrupt_state : t -> bool * bool * int * int * int * bool
+
+  (** The Sega mapper's three 16 KB page registers: which ROM bank is
+      currently visible at $0000, $4000 and $8000. A big game repages these
+      constantly, which is how it fits in a 48 KB window. *)
+  val mapper_pages : t -> int * int * int
 end

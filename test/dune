@@ -68,6 +68,11 @@
  (modules joypad_test)
  (libraries sandbox))
 
+; The debug view's derivations: disassembly, tile decode, sprite table.
+
+(executable
+ (name debug_test)
+ (modules debug_test)
 ; PSG: the SN76489 write protocol, tone frequencies, noise and mixing.
 
 (executable
