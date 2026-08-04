@@ -73,4 +73,16 @@
 (executable
  (name debug_test)
  (modules debug_test)
+; PSG: the SN76489 write protocol, tone frequencies, noise and mixing.
+
+(executable
+ (name psg_test)
+ (modules psg_test)
+ (libraries sandbox))
+
+; Plays a short tune on the PSG and writes a WAV. Ear check, not assertions.
+
+(executable
+ (name psg_wav)
+ (modules psg_wav)
  (libraries sandbox))

@@ -9,7 +9,7 @@
    Everything goes in through the $BE/$BF ports rather than the test
    backdoor, so a run of this also exercises the command protocol.
 
-   Usage: vdp_frame [out.ppm]   (default: frame.ppm) *)
+   Usage: vdp_frame [out.ppm] (default: frame.ppm) *)
 
 open Uints
 
@@ -40,17 +40,45 @@ let write_cram t ~entry values =
 
 (* --- the scene --------------------------------------------------------- *)
 
-(* --BBGGRR. Two arbitrary but well-separated spreads, so that a channel
-   swap or an off-by-one in the palette split is obvious on sight. *)
+(* --BBGGRR. Two arbitrary but well-separated spreads, so that a channel swap
+   or an off-by-one in the palette split is obvious on sight. *)
 let background_palette =
-  [| 0x00; 0x01; 0x02; 0x03; 0x04; 0x08; 0x0C; 0x0D
-   ; 0x10; 0x20; 0x30; 0x31; 0x32; 0x3C; 0x2A; 0x3F
+  [| 0x00
+   ; 0x01
+   ; 0x02
+   ; 0x03
+   ; 0x04
+   ; 0x08
+   ; 0x0C
+   ; 0x0D
+   ; 0x10
+   ; 0x20
+   ; 0x30
+   ; 0x31
+   ; 0x32
+   ; 0x3C
+   ; 0x2A
+   ; 0x3F
   |]
 ;;
 
 let sprite_palette =
-  [| 0x00; 0x03; 0x0C; 0x30; 0x3F; 0x0F; 0x33; 0x3C
-   ; 0x15; 0x2A; 0x01; 0x04; 0x10; 0x14; 0x28; 0x11
+  [| 0x00
+   ; 0x03
+   ; 0x0C
+   ; 0x30
+   ; 0x3F
+   ; 0x0F
+   ; 0x33
+   ; 0x3C
+   ; 0x15
+   ; 0x2A
+   ; 0x01
+   ; 0x04
+   ; 0x10
+   ; 0x14
+   ; 0x28
+   ; 0x11
   |]
 ;;
 
@@ -60,7 +88,8 @@ let plane_bytes row =
     let byte = ref 0 in
     Array.iteri
       (fun x colour ->
-        if (colour lsr plane) land 1 = 1 then byte := !byte lor (1 lsl (7 - x)))
+        if (colour lsr plane) land 1 = 1
+        then byte := !byte lor (1 lsl (7 - x)))
       row;
     !byte)
 ;;
@@ -87,7 +116,10 @@ let put_entry t ~row ~col ~tile ~palette ~priority =
     t
     ~addr
     [ tile land 0xFF
-    ; ((tile lsr 8) land 1) lor (palette lsl 3) lor if priority then 0x10 else 0
+    ; ((tile lsr 8)
+       land 1
+       lor (palette lsl 3)
+       lor if priority then 0x10 else 0)
     ]
 ;;
 
@@ -109,10 +141,10 @@ let build t =
     write_vram t ~addr:(n * 32) (pattern (solid n))
   done;
   write_vram t ~addr:(16 * 32) (pattern (cross 5));
-  (* Rows 0-7: the background palette as vertical stripes, twice across.
-     Rows 8-15: the same tiles through the sprite palette, which is the one
-     thing that distinguishes the palette-select bit from a tile change.
-     Rows 16-23: a flat field, with priority set on columns 8-15 only. *)
+  (* Rows 0-7: the background palette as vertical stripes, twice across. Rows
+     8-15: the same tiles through the sprite palette, which is the one thing
+     that distinguishes the palette-select bit from a tile change. Rows
+     16-23: a flat field, with priority set on columns 8-15 only. *)
   for row = 0 to 23 do
     for col = 0 to 31 do
       let tile, palette, priority =
@@ -149,7 +181,9 @@ let write_ppm t path =
 ;;
 
 let () =
-  let path = if Array.length Sys.argv > 1 then Sys.argv.(1) else "frame.ppm" in
+  let path =
+    if Array.length Sys.argv > 1 then Sys.argv.(1) else "frame.ppm"
+  in
   let t = Vdp.create () in
   build t;
   (* One frame, through the engine rather than by rendering lines directly. *)
@@ -159,7 +193,11 @@ let () =
   write_ppm t path;
   let width, height = Vdp.frame_size t in
   let status = Vdp.read_status t |> Uint8.to_int in
-  Printf.printf "wrote %s (%dx%d), %d frame(s)\n" path width height
+  Printf.printf
+    "wrote %s (%dx%d), %d frame(s)\n"
+    path
+    width
+    height
     (Vdp.frame_count t);
   Printf.printf
     "status $%02X: vblank=%b overflow=%b collision=%b\n"
