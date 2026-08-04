@@ -33,7 +33,8 @@ let running = ref true
    handed straight to the garbage collector. *)
 
 type surface =
-  { c : Dom_html.canvasRenderingContext2D Js.t
+  { el : Dom_html.canvasElement Js.t
+  ; c : Dom_html.canvasRenderingContext2D Js.t
   ; mutable img : Dom_html.imageData Js.t option
   ; mutable dims : int * int
   }
@@ -44,44 +45,75 @@ let surface id =
       (Dom_html.CoerceTo.canvas (by_id id))
       (fun () -> failwith ("missing #" ^ id))
   in
-  { c = el##getContext Dom_html._2d_; img = None; dims = 0, 0 }
+  { el; c = el##getContext Dom_html._2d_; img = None; dims = 0, 0 }
 ;;
 
 (* Blit a three-bytes-per-pixel buffer. Canvas wants four and an opaque
-   alpha, so the expansion happens here. *)
-let blit s ~src ~w ~h =
+   alpha, so the expansion happens here.
+
+   [left] drops that many columns off the left of the source. The canvas is
+   resized to what actually arrives, because putImageData does not scale:
+   a 248-wide image into a 256-wide canvas would leave eight blank columns
+   on the right, which is the stripe moved rather than removed. *)
+let blit ?(left = 0) s ~src ~w ~h =
+  let dw = w - left in
   let img =
     match s.img with
-    | Some i when s.dims = (w, h) -> i
+    | Some i when s.dims = (dw, h) -> i
     | _ ->
-      let i = s.c##createImageData w h in
+      let i = s.c##createImageData dw h in
       s.img <- Some i;
-      s.dims <- w, h;
+      s.dims <- dw, h;
+      (* Assigning width clears the canvas, so only on a real change. *)
+      s.el##.width := dw;
+      s.el##.height := h;
       i
   in
   let data = img##.data in
-  for i = 0 to (w * h) - 1 do
-    let a = i * 3
-    and b = i * 4 in
-    Dom_html.pixel_set data b (Char.code (Bytes.unsafe_get src a));
-    Dom_html.pixel_set
-      data
-      (b + 1)
-      (Char.code (Bytes.unsafe_get src (a + 1)));
-    Dom_html.pixel_set
-      data
-      (b + 2)
-      (Char.code (Bytes.unsafe_get src (a + 2)));
-    Dom_html.pixel_set data (b + 3) 255
+  for y = 0 to h - 1 do
+    for x = 0 to dw - 1 do
+      let a = ((y * w) + x + left) * 3
+      and b = ((y * dw) + x) * 4 in
+      Dom_html.pixel_set data b (Char.code (Bytes.unsafe_get src a));
+      Dom_html.pixel_set
+        data
+        (b + 1)
+        (Char.code (Bytes.unsafe_get src (a + 1)));
+      Dom_html.pixel_set
+        data
+        (b + 2)
+        (Char.code (Bytes.unsafe_get src (a + 2)));
+      Dom_html.pixel_set data (b + 3) 255
+    done
   done;
   s.c##putImageData img (Js.number_of_float 0.) (Js.number_of_float 0.)
 ;;
 
 let screen = surface "screen"
 
+(* The stylesheet multiplies this by the zoom, so the element keeps tracking
+   the picture when the width changes under it. *)
+let set_screen_width px =
+  ignore
+    ((Dom_html.document##.documentElement)##.style##setProperty
+        (Js.string "--screen-w")
+        (Js.string (string_of_int px ^ "px"))
+        Js.undefined
+      : Js.js_string Js.t)
+;;
+
 let render m =
   let w, h = Machine.frame_size m in
-  blit screen ~src:(Machine.framebuffer m) ~w ~h
+  (* R0 bit 5 tells the VDP to paint the leftmost eight pixels with the
+     backdrop colour, hiding the tile column that fine horizontal scrolling
+     brings in half-drawn. That is correct output, and on a real TV it sat
+     in overscan where nobody saw it. Here there is no overscan, so it shows
+     up as a solid stripe -- crop it, but only for the games that ask for
+     the mask, so everyone else keeps all 256 columns. *)
+  let left = if (Debug.vdp_state m).hide_left_column then 8 else 0 in
+  let before = fst screen.dims in
+  blit ~left screen ~src:(Machine.framebuffer m) ~w ~h;
+  if fst screen.dims <> before then set_screen_width (fst screen.dims)
 ;;
 
 (* --- panels ---------------------------------------------------------------
