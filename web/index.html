@@ -199,6 +199,9 @@ canvas.sheet { image-rendering: pixelated; display: block; width: 100%; backgrou
   margin-top: 11px; font-family: var(--sans); font-size: 11px; color: var(--faint);
 }
 .cram-foot button { padding: 3px 8px; font-size: 10.5px; }
+.cram-mode { display: flex; gap: 5px; flex-shrink: 0; }
+.cram-note { font-family: var(--sans); font-size: 10.5px; line-height: 1.5; color: var(--faint); margin: 7px 0 0; }
+.cram-note b { color: var(--dim); font-weight: 600; }
 /* Reached only through a swatch. Kept rendered rather than hidden: the
    picker has to have somewhere to anchor when it opens. */
 #cram-pick { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
@@ -331,8 +334,15 @@ canvas.sheet { image-rendering: pixelated; display: block; width: 100%; backgrou
         <div class="cram" id="cram1"></div>
         <div class="cram-foot">
           <span>Click to recolour &middot; shift-click to undo</span>
-          <button id="cram-reset">Reset all</button>
+          <span class="cram-mode">
+            <button id="cram-mode" data-on="false">tint</button>
+            <button id="cram-reset">Reset all</button>
+          </span>
         </div>
+        <p class="cram-note"><b>tint</b> keeps the shading the game writes, so fades still
+          work &mdash; but white and black are out of reach, being the absence of a
+          colour rather than one of them. <b>replace</b> lands on the picked colour
+          exactly and reaches both, at the cost of flattening the shading.</p>
         <!-- Opened by a swatch, never shown in place. -->
         <input type="color" id="cram-pick">
       </div>

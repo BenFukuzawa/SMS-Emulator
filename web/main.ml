@@ -328,8 +328,16 @@ let update_disasm m =
 (* --- palette -------------------------------------------------------------- *)
 
 (* The swatches double as the recolour control: clicking one opens a colour
-   picker, and the hue of whatever comes back is imposed on that entry from
-   then on. See [Vdp.set_recolour] for why it is the hue and not the colour.
+   picker, and what comes back is imposed on that entry from then on.
+
+   Two modes, because a colour picker asks one question and there are two
+   sensible answers to it. Tinting keeps the lightness the game writes, so a
+   character keeps its shading and its fades but cannot be made white or
+   black -- those are not colours on the wheel, they are the absence of one.
+   Replacing lands on the picked colour exactly, which reaches white and
+   black at the price of flattening the shading. Neither is the right
+   default for every question, so both are here rather than one silently
+   winning.
 
    Which entries a given character occupies is not written down anywhere and
    cannot be worked out from the ROM without playing it -- sprites all read
@@ -362,27 +370,36 @@ let update_cram m =
               ((rgb lsr 8) land 0xFF)
               (rgb land 0xFF));
       el##.className
-      := Js.string
-           (match Vdp.recolour vdp ~entry:i with
-            | Some _ -> "set"
-            | None -> ""))
+      := Js.string (if Vdp.recolour vdp ~entry:i then "set" else ""))
     (Lazy.force cram_cells)
 ;;
 
 (* The entry the colour input is standing in for, while it is open. *)
 let picking = ref 0
 
-let set_recolour entry hue =
+(* False tints, true replaces. *)
+let replacing = ref false
+
+let with_vdp f =
   match !machine with
   | None -> ()
   | Some m ->
-    Vdp.set_recolour (Machine.For_debug.vdp m) ~entry ~hue;
+    f (Machine.For_debug.vdp m);
     (* The swatches are redrawn now rather than on the next refresh tier, so
        a click answers immediately. The picture follows a frame later: the
        framebuffer holds the last one drawn, and repainting it would mean
        re-rendering lines the chip has already moved past. *)
     update_cram m
 ;;
+
+let recolour entry rgb =
+  with_vdp (fun vdp ->
+    if !replacing
+    then Vdp.set_replace vdp ~entry ~rgb
+    else Vdp.set_tint vdp ~entry ~rgb)
+;;
+
+let clear entry = with_vdp (fun vdp -> Vdp.clear_recolour vdp ~entry)
 
 let install_cram () =
   let picker =
@@ -395,7 +412,7 @@ let install_cram () =
            (* Shift-click clears, which saves a trip through the picker to
               undo a guess -- and undoing a guess is most of this. *)
            if Js.to_bool ev##.shiftKey
-           then set_recolour i None
+           then clear i
            else
              Option.iter
                (fun (p : Dom_html.inputElement Js.t) ->
@@ -429,17 +446,23 @@ let install_cram () =
                  then int_of_string_opt ("0x" ^ String.sub s 1 6)
                  else None
                with
-               (* A grey picked here reads as [None] and so clears the
-                  entry, which is the only sensible reading of it: there is
-                  no hue to move an entry to. *)
-               | Some rgb -> set_recolour !picking (Vdp.hue_of_rgb rgb)
+               | Some rgb -> recolour !picking rgb
                | None -> ());
               Js._true))
            Js._false))
     picker;
+  on_click "cram-mode" (fun () ->
+    replacing := not !replacing;
+    match opt_id "cram-mode" with
+    | None -> ()
+    | Some el ->
+      set_text el (if !replacing then "replace" else "tint");
+      el##setAttribute
+        (Js.string "data-on")
+        (Js.string (if !replacing then "true" else "false")));
   on_click "cram-reset" (fun () ->
     for i = 0 to 31 do
-      set_recolour i None
+      clear i
     done)
 ;;
 

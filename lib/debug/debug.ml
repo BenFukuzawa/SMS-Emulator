@@ -124,12 +124,12 @@ let disassemble m ~at ~count =
 (* --- colour -------------------------------------------------------------
 
    Read out of the VDP rather than expanded again here. This module used to
-   restate the two-bits-per-channel arithmetic, which was correct but only
-   as long as nothing sat between CRAM and the screen; recolouring is
-   exactly such a thing, and a viewer that disagreed with the renderer about
-   what a colour looks like would be worse than useless. Asking the chip is
-   the version that cannot drift. debug_test.ml pins it against a rendered
-   frame either way. *)
+   restate the two-bits-per-channel arithmetic, which was correct but only as
+   long as nothing sat between CRAM and the screen; recolouring is exactly
+   such a thing, and a viewer that disagreed with the renderer about what a
+   colour looks like would be worse than useless. Asking the chip is the
+   version that cannot drift. debug_test.ml pins it against a rendered frame
+   either way. *)
 let cram_rgb m n = Vdp.palette_rgb (Machine.For_debug.vdp m) ~entry:n
 
 let cram m =
