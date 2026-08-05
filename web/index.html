@@ -71,13 +71,15 @@ body.nodebug .panels { display: none; }
    shimmer along every vertical edge. The canvas takes an exact multiple
    and the panel sizes itself to fit, not the other way round. */
 
-/* --screen-w is set from the emulator: 256px, or 248px once the leftmost
-   column is cropped away (see render). */
+/* Both set from the emulator, because neither is fixed: the width drops to
+   248px once the masked left column is cropped away, and the height follows
+   the video mode, which is 192, 224 or 240 lines. Hardcoding either scales
+   the picture by a fraction, which is the shimmer described above. */
 
 #screen {
   image-rendering: pixelated; display: block;
   width:  calc(var(--screen-w, 256px) * var(--scale));
-  height: calc(192px * var(--scale));
+  height: calc(var(--screen-h, 192px) * var(--scale));
   background: #000; border: 1px solid var(--line); border-radius: 2px;
 }
 

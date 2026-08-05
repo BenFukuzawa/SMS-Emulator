@@ -91,15 +91,21 @@ let blit ?(left = 0) s ~src ~w ~h =
 
 let screen = surface "screen"
 
-(* The stylesheet multiplies this by the zoom, so the element keeps tracking
-   the picture when the width changes under it. *)
-let set_screen_width px =
-  ignore
-    ((Dom_html.document##.documentElement)##.style##setProperty
-        (Js.string "--screen-w")
-        (Js.string (string_of_int px ^ "px"))
-        Js.undefined
-      : Js.js_string Js.t)
+(* The stylesheet multiplies these by the zoom, so the element keeps tracking
+   the picture when its size changes underneath. Both dimensions move: the
+   width when the masked column is cropped, and the height because 224- and
+   240-line modes exist and a canvas pinned at 192 would squash them. *)
+let set_screen_size ~w ~h =
+  let set name px =
+    ignore
+      ((Dom_html.document##.documentElement)##.style##setProperty
+          (Js.string name)
+          (Js.string (string_of_int px ^ "px"))
+          Js.undefined
+        : Js.js_string Js.t)
+  in
+  set "--screen-w" w;
+  set "--screen-h" h
 ;;
 
 let render m =
@@ -111,9 +117,12 @@ let render m =
      up as a solid stripe -- crop it, but only for the games that ask for
      the mask, so everyone else keeps all 256 columns. *)
   let left = if (Debug.vdp_state m).hide_left_column then 8 else 0 in
-  let before = fst screen.dims in
+  let before = screen.dims in
   blit ~left screen ~src:(Machine.framebuffer m) ~w ~h;
-  if fst screen.dims <> before then set_screen_width (fst screen.dims)
+  if screen.dims <> before
+  then (
+    let w, h = screen.dims in
+    set_screen_size ~w ~h)
 ;;
 
 (* --- panels ---------------------------------------------------------------
