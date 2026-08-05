@@ -21,6 +21,16 @@ let status = by_id "status"
 let set_status s = status##.innerHTML := Js.string s
 let set_text el s = el##.textContent := Js.some (Js.string s)
 
+let on_click id f =
+  match opt_id id with
+  | None -> ()
+  | Some el ->
+    el##.onclick
+    := Dom.handler (fun _ ->
+         f ();
+         Js._true)
+;;
+
 (* The running machine, or None until a ROM is loaded, and the key mapping. *)
 let machine : Machine.t option ref = ref None
 let mode = ref Joypad.One_player
@@ -317,6 +327,16 @@ let update_disasm m =
 
 (* --- palette -------------------------------------------------------------- *)
 
+(* The swatches double as the recolour control: clicking one opens a colour
+   picker, and the hue of whatever comes back is imposed on that entry from
+   then on. See [Vdp.set_recolour] for why it is the hue and not the colour.
+
+   Which entries a given character occupies is not written down anywhere and
+   cannot be worked out from the ROM without playing it -- sprites all read
+   the upper sixteen -- so finding them is a matter of clicking one and
+   seeing what changes on the screen. The ring on a recoloured swatch is
+   there to make that search retraceable. *)
+
 let cram_cells =
   lazy
     (List.concat_map
@@ -330,6 +350,7 @@ let cram_cells =
 ;;
 
 let update_cram m =
+  let vdp = Machine.For_debug.vdp m in
   List.iteri
     (fun i el ->
       let rgb = Debug.cram_rgb m i in
@@ -339,8 +360,87 @@ let update_cram m =
               "rgb(%d,%d,%d)"
               ((rgb lsr 16) land 0xFF)
               ((rgb lsr 8) land 0xFF)
-              (rgb land 0xFF)))
+              (rgb land 0xFF));
+      el##.className
+      := Js.string
+           (match Vdp.recolour vdp ~entry:i with
+            | Some _ -> "set"
+            | None -> ""))
     (Lazy.force cram_cells)
+;;
+
+(* The entry the colour input is standing in for, while it is open. *)
+let picking = ref 0
+
+let set_recolour entry hue =
+  match !machine with
+  | None -> ()
+  | Some m ->
+    Vdp.set_recolour (Machine.For_debug.vdp m) ~entry ~hue;
+    (* The swatches are redrawn now rather than on the next refresh tier, so
+       a click answers immediately. The picture follows a frame later: the
+       framebuffer holds the last one drawn, and repainting it would mean
+       re-rendering lines the chip has already moved past. *)
+    update_cram m
+;;
+
+let install_cram () =
+  let picker =
+    Dom_html.CoerceTo.input (by_id "cram-pick") |> Js.Opt.to_option
+  in
+  List.iteri
+    (fun i el ->
+      el##.onclick
+      := Dom.handler (fun ev ->
+           (* Shift-click clears, which saves a trip through the picker to
+              undo a guess -- and undoing a guess is most of this. *)
+           if Js.to_bool ev##.shiftKey
+           then set_recolour i None
+           else
+             Option.iter
+               (fun (p : Dom_html.inputElement Js.t) ->
+                 picking := i;
+                 (match !machine with
+                  | None -> ()
+                  | Some m ->
+                    let rgb = Debug.cram_rgb m i in
+                    p##.value
+                    := Js.string (Printf.sprintf "#%06x" (rgb land 0xFFFFFF)));
+                 ignore (Js.Unsafe.meth_call p "click" [||]))
+               picker;
+           Js._true))
+    (Lazy.force cram_cells);
+  Option.iter
+    (fun (p : Dom_html.inputElement Js.t) ->
+      (* [input] rather than [change]: the colour follows the cursor around
+         the picker, which is the only way to hunt for a shade against a
+         picture that is still moving. *)
+      ignore
+        (Dom_html.addEventListener
+           p
+           Dom_html.Event.input
+           (Dom.handler (fun _ ->
+              (* "#rrggbb" is the only format the element produces, but it
+                 is a string off an input and the cost of being wrong about
+                 that is an exception inside an event handler. *)
+              let s = Js.to_string p##.value in
+              (match
+                 if String.length s = 7
+                 then int_of_string_opt ("0x" ^ String.sub s 1 6)
+                 else None
+               with
+               (* A grey picked here reads as [None] and so clears the
+                  entry, which is the only sensible reading of it: there is
+                  no hue to move an entry to. *)
+               | Some rgb -> set_recolour !picking (Vdp.hue_of_rgb rgb)
+               | None -> ());
+              Js._true))
+           Js._false))
+    picker;
+  on_click "cram-reset" (fun () ->
+    for i = 0 to 31 do
+      set_recolour i None
+    done)
 ;;
 
 (* --- sprites -------------------------------------------------------------- *)
@@ -817,16 +917,6 @@ let set_running v =
       (Js.string (if v then "false" else "true"))
 ;;
 
-let on_click id f =
-  match opt_id id with
-  | None -> ()
-  | Some el ->
-    el##.onclick
-    := Dom.handler (fun _ ->
-         f ();
-         Js._true)
-;;
-
 let install_transport () =
   on_click "run" (fun () -> set_running (not !running));
   on_click "step" (fun () ->
@@ -908,6 +998,7 @@ let () =
   install_toggle ();
   install_rom_input ();
   install_panel_switches ();
+  install_cram ();
   install_master ();
   install_scale ();
   install_transport ();

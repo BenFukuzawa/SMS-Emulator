@@ -1201,6 +1201,122 @@ let test_colour_expansion () =
     ~actual:(rgb t ~x:1 ~y:0)
 ;;
 
+(* --- recolouring ------------------------------------------------------
+
+   None of this arrives through a port: it is the host reaching in, and the
+   program cannot tell it happened. The cases that matter are the ones a
+   simpler design fails. Putting a colour straight into CRAM would pass the
+   first test here and none of the rest, because a game rewrites its palette
+   constantly and every rewrite would undo it. *)
+
+let test_recolour_replaces_the_hue () =
+  group "recolour";
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30 (* full blue *);
+  Vdp.set_recolour t ~entry:1 ~hue:(Some 0);
+  render t ~line:0;
+  (* Set after the write, and the entry moved anyway -- a paused machine has
+     no next palette write to carry it. *)
+  check_rgb
+    ~name:"blue became red"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0);
+  Vdp.set_recolour t ~entry:1 ~hue:None;
+  render t ~line:0;
+  check_rgb
+    ~name:"cleared, and blue is blue again"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+let test_recolour_outlives_the_program () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  Vdp.set_recolour t ~entry:1 ~hue:(Some 0);
+  (* The program writes the entry afterwards, as it does every frame. *)
+  put_cram t ~entry:1 ~value:0x30;
+  render t ~line:0;
+  check_rgb
+    ~name:"a later palette write is recoloured too"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* Fading out is the program walking the palette down to black. The recolour
+   has to ride that rather than sit above it, or the sprite stays lit while
+   the screen around it goes dark. *)
+let test_recolour_fades_with_the_palette () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  Vdp.set_recolour t ~entry:1 ~hue:(Some 0);
+  put_cram t ~entry:1 ~value:0x30 (* blue, full *);
+  render t ~line:0;
+  check_rgb ~name:"full" ~expect:(255, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x20 (* blue, two thirds *);
+  render t ~line:0;
+  check_rgb ~name:"two thirds" ~expect:(170, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x10 (* blue, one third *);
+  render t ~line:0;
+  check_rgb ~name:"one third" ~expect:(85, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x00;
+  render t ~line:0;
+  check_rgb ~name:"faded to black" ~expect:(0, 0, 0) ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* A character is a ramp of entries, not one. Recolouring them all to the
+   same hue has to leave the steps of the ramp distinct, or the shading
+   collapses and what is left is a silhouette. *)
+let test_recolour_keeps_a_ramp_distinct () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30 (* three blues, light to dark *);
+  put_cram t ~entry:2 ~value:0x20;
+  put_cram t ~entry:3 ~value:0x10;
+  List.iter
+    (fun entry -> Vdp.set_recolour t ~entry ~hue:(Some 120))
+    [ 1; 2; 3 ];
+  render t ~line:0;
+  check_rgb ~name:"ramp step 1" ~expect:(0, 255, 0) ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb ~name:"ramp step 2" ~expect:(0, 170, 0) ~actual:(rgb t ~x:2 ~y:0);
+  check_rgb ~name:"ramp step 3" ~expect:(0, 85, 0) ~actual:(rgb t ~x:3 ~y:0)
+;;
+
+(* Whites and blacks have no hue to move. That is what keeps eyes, gloves
+   and outlines out of it when the body colour changes. *)
+let test_recolour_leaves_greys_alone () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x3F (* white *);
+  put_cram t ~entry:2 ~value:0x15 (* mid grey *);
+  Vdp.set_recolour t ~entry:1 ~hue:(Some 0);
+  Vdp.set_recolour t ~entry:2 ~hue:(Some 0);
+  render t ~line:0;
+  check_rgb
+    ~name:"white is still white"
+    ~expect:(255, 255, 255)
+    ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb
+    ~name:"grey is still grey"
+    ~expect:(85, 85, 85)
+    ~actual:(rgb t ~x:2 ~y:0)
+;;
+
+let test_hue_of_rgb () =
+  let hue rgb = match Vdp.hue_of_rgb rgb with Some h -> h | None -> -1 in
+  check ~name:"red is 0" ~expect:0 ~actual:(hue 0xFF0000);
+  check ~name:"green is 120" ~expect:120 ~actual:(hue 0x00FF00);
+  check ~name:"blue is 240" ~expect:240 ~actual:(hue 0x0000FF);
+  check ~name:"a grey has no hue" ~expect:(-1) ~actual:(hue 0x555555);
+  (* Round trip: the hue read off a colour is the one that lands on it. *)
+  let t = Vdp.create () in
+  Vdp.set_recolour t ~entry:1 ~hue:(Vdp.hue_of_rgb 0x00FF00);
+  check
+    ~name:"the recolour in force is readable"
+    ~expect:120
+    ~actual:(match Vdp.recolour t ~entry:1 with Some h -> h | None -> -1)
+;;
+
 let test_sprite_palette_reaches_the_framebuffer () =
   group "sprite palette in the framebuffer";
   let t = scene () in
@@ -1300,6 +1416,12 @@ let () =
   test_background_priority ();
   test_sprites_respect_blanking ();
   test_colour_expansion ();
+  test_recolour_replaces_the_hue ();
+  test_recolour_outlives_the_program ();
+  test_recolour_fades_with_the_palette ();
+  test_recolour_keeps_a_ramp_distinct ();
+  test_recolour_leaves_greys_alone ();
+  test_hue_of_rgb ();
   test_sprite_palette_reaches_the_framebuffer ();
   test_frame_size_follows_the_mode ();
   test_a_whole_frame_is_written ();

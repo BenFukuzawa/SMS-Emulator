@@ -39,6 +39,11 @@ type t =
   ; (* CRAM expanded to packed 0xRRGGBB, rebuilt on every palette write so
        the per-pixel path never does the arithmetic. *)
     palette_rgb : int array (* 32, mirrors cram *)
+  ; (* Host-side recolouring, which no hardware ever did and no program can
+       see: a hue per entry, imposed on whatever the program writes there.
+       [None] leaves the entry alone, which is every entry until something
+       outside asks otherwise. See [set_recolour]. *)
+    recolour : int option array (* 32, degrees *)
   ; (* The active display, three bytes per pixel, top row first. Sized for
        the tallest mode; frame_size says how much of it is live. *)
     framebuffer : Bytes.t
@@ -165,6 +170,88 @@ let cram_rgb entry =
   (red lsl 16) lor (green lsl 8) lor blue
 ;;
 
+(* --- recolouring ---------------------------------------------------------
+
+   Swap the hue of a colour, keeping everything else about it.
+
+   A recolour has to be a function of the byte the program wrote rather than
+   a colour put in its place, because the program keeps writing. A sprite is
+   not one colour but a ramp of them -- highlight, mid, shadow -- and a game
+   walks its whole palette down to black to fade the screen out. A constant
+   substituted for an entry would flatten that ramp into a silhouette, and
+   would then sit there at full brightness while everything around it faded.
+   Moving the hue and nothing else leaves both intact: the ramp and the fade
+   are both lightness, and lightness is what this preserves.
+
+   Greys fall out of it without a special case. A neutral has no hue to move,
+   so eyes and gloves stay where they are while the body changes colour.
+
+   HSL, but only the parts needed. Chroma survives the round trip untouched
+   -- it is what saturation is defined against, so recovering the saturation
+   only to multiply it back out again would be arithmetic for its own sake. *)
+let with_hue rgb ~hue =
+  let r = float_of_int ((rgb lsr 16) land 0xFF) /. 255.
+  and g = float_of_int ((rgb lsr 8) land 0xFF) /. 255.
+  and b = float_of_int (rgb land 0xFF) /. 255. in
+  let hi = Float.max r (Float.max g b)
+  and lo = Float.min r (Float.min g b) in
+  let chroma = hi -. lo in
+  if chroma = 0.
+  then rgb
+  else (
+    let lightness = (hi +. lo) /. 2. in
+    (* Into sixths of the circle, negatives folded back in first. *)
+    let h = float_of_int (((hue mod 360) + 360) mod 360) /. 60. in
+    let x = chroma *. (1. -. Float.abs (Float.rem h 2. -. 1.)) in
+    let base = lightness -. (chroma /. 2.) in
+    let r', g', b' =
+      match int_of_float h with
+      | 0 -> chroma, x, 0.
+      | 1 -> x, chroma, 0.
+      | 2 -> 0., chroma, x
+      | 3 -> 0., x, chroma
+      | 4 -> x, 0., chroma
+      | _ -> chroma, 0., x
+    in
+    let byte v =
+      let n = int_of_float (Float.round ((v +. base) *. 255.)) in
+      if n < 0 then 0 else if n > 255 then 255 else n
+    in
+    (byte r' lsl 16) lor (byte g' lsl 8) lor byte b')
+;;
+
+(* The hue of a packed colour, or [None] where there is no hue to speak of.
+   The inverse of the above, for a host that has a colour in hand and wants
+   the [set_recolour] that would produce it. *)
+let hue_of_rgb rgb =
+  let r = float_of_int ((rgb lsr 16) land 0xFF)
+  and g = float_of_int ((rgb lsr 8) land 0xFF)
+  and b = float_of_int (rgb land 0xFF) in
+  let hi = Float.max r (Float.max g b)
+  and lo = Float.min r (Float.min g b) in
+  let chroma = hi -. lo in
+  if chroma = 0.
+  then None
+  else (
+    let h =
+      if hi = r
+      then Float.rem (((g -. b) /. chroma) +. 6.) 6.
+      else if hi = g
+      then ((b -. r) /. chroma) +. 2.
+      else ((r -. g) /. chroma) +. 4.
+    in
+    Some (int_of_float (Float.round (h *. 60.)) mod 360))
+;;
+
+(* What an entry actually reaches the screen as: the colour the program
+   wrote, then the host's recolour if it has asked for one. *)
+let effective_rgb t entry =
+  let rgb = cram_rgb t.cram.(entry) in
+  match t.recolour.(entry) with
+  | None -> rgb
+  | Some hue -> with_hue rgb ~hue
+;;
+
 (* Power-on values, from the Mark III software reference manual. *)
 let initial_registers =
   [| 0x36 (* R0: mode *)
@@ -204,6 +291,7 @@ let create () =
   ; bg_priority = Array.make 256 false
   ; sprite_index = Array.make 256 0
   ; palette_rgb = Array.make 0x20 0 (* CRAM powers on all zero, so black *)
+  ; recolour = Array.make 0x20 None
   ; framebuffer = Bytes.make (256 * 240 * 3) '\000'
   }
 ;;
@@ -281,7 +369,7 @@ let write_data t byte =
   then (
     let entry = t.address land 0x1F in
     t.cram.(entry) <- byte;
-    t.palette_rgb.(entry) <- cram_rgb byte)
+    t.palette_rgb.(entry) <- effective_rgb t entry)
   else Bytes.set t.vram t.address (Char.chr byte);
   t.read_buffer <- byte;
   t.address <- (t.address + 1) land 0x3FFF
@@ -296,6 +384,19 @@ let read_data t =
   prefetch t;
   Uint8.of_int v
 ;;
+
+(* Recolouring is set from outside the machine, so unlike every other write
+   on this chip it does not arrive on the back of a program writing a
+   palette. The expansion is redone here rather than left for the next such
+   write, which on a paused machine might never come. *)
+let set_recolour t ~entry ~hue =
+  let entry = entry land 0x1F in
+  t.recolour.(entry) <- hue;
+  t.palette_rgb.(entry) <- effective_rgb t entry
+;;
+
+let recolour t ~entry = t.recolour.(entry land 0x1F)
+let palette_rgb t ~entry = t.palette_rgb.(entry land 0x1F)
 
 (* --- the scanline engine -----------------------------------------------
 

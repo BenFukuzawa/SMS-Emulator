@@ -56,6 +56,38 @@ val framebuffer : t -> Bytes.t
     follows the display mode, so it changes when a program writes R0 or R1. *)
 val frame_size : t -> int * int
 
+(** Recolour one of the 32 CRAM entries, for as long as it is set. Not
+    something the hardware could do and not visible to the program, which
+    goes on writing whatever palette it likes: the substitution happens
+    between CRAM and the screen.
+
+    [hue] is degrees around the colour circle. It replaces the hue of
+    whatever the program writes to that entry, keeping the saturation and
+    lightness, and so survives the two things that defeat simply poking a
+    colour into CRAM -- palette fades, which are lightness and go on
+    working, and multi-entry shading ramps, whose steps stay distinct
+    because each keeps its own lightness. Greys have no hue and are left
+    alone. [None] restores the entry.
+
+    An entry is shared by everything drawn through it, which is a property
+    of the hardware and not of this: sprites all read the upper 16 entries,
+    so recolouring one character recolours anything else that happens to be
+    drawn from the same entries. *)
+val set_recolour : t -> entry:int -> hue:int option -> unit
+
+(** The recolour in force on an entry, if any. *)
+val recolour : t -> entry:int -> int option
+
+(** What an entry reaches the screen as, packed [0xRRGGBB]: the colour the
+    program wrote, after any recolour. This is the palette the renderer
+    actually reads, so a viewer showing colours should show these. *)
+val palette_rgb : t -> entry:int -> int
+
+(** The hue of a packed [0xRRGGBB] in degrees, or [None] for a grey -- for
+    turning a colour a person picked into the [set_recolour] that lands on
+    it. *)
+val hue_of_rgb : int -> int option
+
 (** Direct access to state that is otherwise reachable only through the port
     protocol -- which is exactly the thing under test. *)
 module For_tests : sig

@@ -123,25 +123,14 @@ let disassemble m ~at ~count =
 
 (* --- colour -------------------------------------------------------------
 
-   Two bits per channel, spread evenly over 0-255. This is [cram_rgb] in
-   vdp.ml; it is restated rather than shared because the VDP keeps its
-   expanded palette private, and a viewer that disagreed with the renderer
-   about what a colour looks like would be worse than useless. If the two
-   ever drift, debug_test.ml catches it by comparing a rendered frame against
-   this. *)
-let expand2 v = v * 85
-
-let rgb_of_entry e =
-  let r = expand2 (e land 3)
-  and g = expand2 ((e lsr 2) land 3)
-  and b = expand2 ((e lsr 4) land 3) in
-  (r lsl 16) lor (g lsl 8) lor b
-;;
-
-let cram_rgb m n =
-  rgb_of_entry
-    (Vdp.For_tests.cram_entry (Machine.For_debug.vdp m) (n land 31))
-;;
+   Read out of the VDP rather than expanded again here. This module used to
+   restate the two-bits-per-channel arithmetic, which was correct but only
+   as long as nothing sat between CRAM and the screen; recolouring is
+   exactly such a thing, and a viewer that disagreed with the renderer about
+   what a colour looks like would be worse than useless. Asking the chip is
+   the version that cannot drift. debug_test.ml pins it against a rendered
+   frame either way. *)
+let cram_rgb m n = Vdp.palette_rgb (Machine.For_debug.vdp m) ~entry:n
 
 let cram m =
   let vdp = Machine.For_debug.vdp m in
@@ -191,8 +180,7 @@ let blit_row vdp buf ~at ~addr ~pal ~flip =
       lor (((p2 lsr bit) land 1) lsl 2)
       lor (((p3 lsr bit) land 1) lsl 3)
     in
-    let e = Vdp.For_tests.cram_entry vdp (pal + c) in
-    put buf ~at:(at + (x * 3)) ~rgb:(rgb_of_entry e)
+    put buf ~at:(at + (x * 3)) ~rgb:(Vdp.palette_rgb vdp ~entry:(pal + c))
   done
 ;;
 
