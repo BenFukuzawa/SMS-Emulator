@@ -37,8 +37,9 @@ val disassemble : Machine.t -> at:int -> count:int -> line list
 
 (** {1 Colour} *)
 
-(** CRAM entry 0-31 as packed [0xRRGGBB]. The VDP stores two bits per
-    channel, so this is one of only 64 possible colours. *)
+(** CRAM entry 0-31 as it reaches the screen, packed [0xRRGGBB]. The VDP
+    stores two bits per channel, so this is one of only 64 possible colours
+    unless the entry has been recoloured -- see [Vdp.set_tint]. *)
 val cram_rgb : Machine.t -> int -> int
 
 (** All 32 entries, background palette first. *)

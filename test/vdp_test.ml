@@ -1201,6 +1201,252 @@ let test_colour_expansion () =
     ~actual:(rgb t ~x:1 ~y:0)
 ;;
 
+(* --- recolouring ------------------------------------------------------
+
+   None of this arrives through a port: it is the host reaching in, and the
+   program cannot tell it happened. The cases that matter are the ones a
+   simpler design fails. Putting a colour straight into CRAM would pass the
+   first test here and none of the rest, because a game rewrites its palette
+   constantly and every rewrite would undo it.
+
+   The two modes are tested against each other throughout. Each can do
+   something the other cannot, which is the whole reason both exist. *)
+
+let test_tint_replaces_the_colour () =
+  group "recolour: tint";
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30 (* full blue *);
+  Vdp.set_tint t ~entry:1 ~rgb:0xFF0000;
+  render t ~line:0;
+  (* Set after the write, and the entry moved anyway -- a paused machine has
+     no next palette write to carry it. *)
+  check_rgb
+    ~name:"blue became red"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0);
+  Vdp.clear_recolour t ~entry:1;
+  render t ~line:0;
+  check_rgb
+    ~name:"cleared, and blue is blue again"
+    ~expect:(0, 0, 255)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* Saturation is part of the answer, not just hue. A washed-out pick and a
+   vivid one at the same hue have to land somewhere different, or a colour
+   picker is promising two axes it does not have. *)
+let test_tint_honours_saturation () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30;
+  Vdp.set_tint t ~entry:1 ~rgb:0xBF4040 (* half-saturated red *);
+  render t ~line:0;
+  check_rgb
+    ~name:"a washed-out pick stays washed out"
+    ~expect:(191, 64, 64)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* The limit of the mode, stated as a test so it cannot quietly change.
+   White is not a colour on the wheel, so a tint cannot travel to it: what
+   comes back is the grey of the same lightness, which is the honest answer
+   to "this colour, but with no colour in it". *)
+let test_tint_cannot_reach_white () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30;
+  Vdp.set_tint t ~entry:1 ~rgb:0xFFFFFF;
+  render t ~line:0;
+  check_rgb
+    ~name:"tinting white gives the grey underneath"
+    ~expect:(128, 128, 128)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+let test_tint_outlives_the_program () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  Vdp.set_tint t ~entry:1 ~rgb:0xFF0000;
+  (* The program writes the entry afterwards, as it does every frame. *)
+  put_cram t ~entry:1 ~value:0x30;
+  render t ~line:0;
+  check_rgb
+    ~name:"a later palette write is recoloured too"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* Fading out is the program walking the palette down to black. The recolour
+   has to ride that rather than sit above it, or the sprite stays lit while
+   the screen around it goes dark. *)
+let test_tint_fades_with_the_palette () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  Vdp.set_tint t ~entry:1 ~rgb:0xFF0000;
+  put_cram t ~entry:1 ~value:0x30 (* blue, full *);
+  render t ~line:0;
+  check_rgb ~name:"full" ~expect:(255, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x20 (* blue, two thirds *);
+  render t ~line:0;
+  check_rgb ~name:"two thirds" ~expect:(170, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x10 (* blue, one third *);
+  render t ~line:0;
+  check_rgb ~name:"one third" ~expect:(85, 0, 0) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x00;
+  render t ~line:0;
+  check_rgb ~name:"faded to black" ~expect:(0, 0, 0) ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* A character is a ramp of entries, not one. Tinting them all the same
+   colour has to leave the steps distinct, or the shading collapses and what
+   is left is a silhouette. *)
+let test_tint_keeps_a_ramp_distinct () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30 (* three blues, light to dark *);
+  put_cram t ~entry:2 ~value:0x20;
+  put_cram t ~entry:3 ~value:0x10;
+  List.iter
+    (fun entry -> Vdp.set_tint t ~entry ~rgb:0x00FF00)
+    [ 1; 2; 3 ];
+  render t ~line:0;
+  check_rgb ~name:"ramp step 1" ~expect:(0, 255, 0) ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb ~name:"ramp step 2" ~expect:(0, 170, 0) ~actual:(rgb t ~x:2 ~y:0);
+  check_rgb ~name:"ramp step 3" ~expect:(0, 85, 0) ~actual:(rgb t ~x:3 ~y:0)
+;;
+
+(* Black and white have no room for a colour at all -- at the ends of the
+   lightness axis every saturation collapses to the same point. So they sit
+   out a tint without needing a special case, which is what keeps eyes and
+   gloves out of it when the body changes colour. *)
+let test_tint_leaves_the_extremes_alone () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x3F (* white *);
+  put_cram t ~entry:2 ~value:0x00 (* black *);
+  Vdp.set_tint t ~entry:1 ~rgb:0xFF0000;
+  Vdp.set_tint t ~entry:2 ~rgb:0xFF0000;
+  render t ~line:0;
+  check_rgb
+    ~name:"white is still white"
+    ~expect:(255, 255, 255)
+    ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb
+    ~name:"black is still black"
+    ~expect:(0, 0, 0)
+    ~actual:(rgb t ~x:2 ~y:0)
+;;
+
+let test_replace_lands_exactly () =
+  group "recolour: replace";
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30 (* full blue *);
+  put_cram t ~entry:2 ~value:0x30;
+  Vdp.set_replace t ~entry:1 ~rgb:0xFF0000;
+  (* A pick darker than what is there: the lightness has to travel too. *)
+  Vdp.set_replace t ~entry:2 ~rgb:0x550000;
+  render t ~line:0;
+  check_rgb
+    ~name:"landed on the colour asked for"
+    ~expect:(255, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb
+    ~name:"and on a darker one"
+    ~expect:(85, 0, 0)
+    ~actual:(rgb t ~x:2 ~y:0)
+;;
+
+(* The reason the mode exists: these two are unreachable by a tint. *)
+let test_replace_reaches_white_and_black () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30;
+  put_cram t ~entry:2 ~value:0x30;
+  Vdp.set_replace t ~entry:1 ~rgb:0xFFFFFF;
+  Vdp.set_replace t ~entry:2 ~rgb:0x000000;
+  render t ~line:0;
+  check_rgb
+    ~name:"white"
+    ~expect:(255, 255, 255)
+    ~actual:(rgb t ~x:1 ~y:0);
+  check_rgb ~name:"black" ~expect:(0, 0, 0) ~actual:(rgb t ~x:2 ~y:0)
+;;
+
+(* Carrying the lightness as a factor rather than a value is what buys this:
+   an entry pinned to white still darkens when the program darkens it, and
+   still reaches black at the bottom. A colour poked into CRAM would sit
+   there glowing through the fade. *)
+let test_replace_still_fades () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30;
+  Vdp.set_replace t ~entry:1 ~rgb:0xFFFFFF;
+  render t ~line:0;
+  check_rgb ~name:"white" ~expect:(255, 255, 255) ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x20;
+  render t ~line:0;
+  check_rgb
+    ~name:"dimmed with the palette"
+    ~expect:(170, 170, 170)
+    ~actual:(rgb t ~x:1 ~y:0);
+  put_cram t ~entry:1 ~value:0x00;
+  render t ~line:0;
+  check_rgb
+    ~name:"and still reaches black"
+    ~expect:(0, 0, 0)
+    ~actual:(rgb t ~x:1 ~y:0)
+;;
+
+(* The cost of the mode, pinned so it stays a known trade rather than a
+   surprise. Three distinct blues all asked for white all become white:
+   there is nothing above white for the lighter steps to occupy. *)
+let test_replace_flattens_a_ramp () =
+  let t = scene () in
+  fill_row t ~row:0 ~tile:1;
+  put_cram t ~entry:1 ~value:0x30;
+  put_cram t ~entry:2 ~value:0x20;
+  put_cram t ~entry:3 ~value:0x10;
+  List.iter
+    (fun entry -> Vdp.set_replace t ~entry ~rgb:0xFFFFFF)
+    [ 1; 2; 3 ];
+  render t ~line:0;
+  List.iter
+    (fun x ->
+      check_rgb
+        ~name:(Printf.sprintf "step %d flattened to white" x)
+        ~expect:(255, 255, 255)
+        ~actual:(rgb t ~x ~y:0))
+    [ 1; 2; 3 ]
+;;
+
+let test_recolour_is_reported () =
+  let t = Vdp.create () in
+  check_bool
+    ~name:"nothing recoloured to begin with"
+    ~expect:false
+    ~actual:(Vdp.recolour t ~entry:1);
+  Vdp.set_tint t ~entry:1 ~rgb:0xFF0000;
+  check_bool
+    ~name:"a tint is reported"
+    ~expect:true
+    ~actual:(Vdp.recolour t ~entry:1);
+  Vdp.clear_recolour t ~entry:1;
+  check_bool
+    ~name:"and cleared again"
+    ~expect:false
+    ~actual:(Vdp.recolour t ~entry:1)
+;;
+
+let test_hue_of_rgb () =
+  let hue rgb = match Vdp.hue_of_rgb rgb with Some h -> h | None -> -1 in
+  check ~name:"red is 0" ~expect:0 ~actual:(hue 0xFF0000);
+  check ~name:"green is 120" ~expect:120 ~actual:(hue 0x00FF00);
+  check ~name:"blue is 240" ~expect:240 ~actual:(hue 0x0000FF);
+  check ~name:"a grey has no hue" ~expect:(-1) ~actual:(hue 0x555555)
+;;
+
 let test_sprite_palette_reaches_the_framebuffer () =
   group "sprite palette in the framebuffer";
   let t = scene () in
@@ -1300,6 +1546,19 @@ let () =
   test_background_priority ();
   test_sprites_respect_blanking ();
   test_colour_expansion ();
+  test_tint_replaces_the_colour ();
+  test_tint_honours_saturation ();
+  test_tint_cannot_reach_white ();
+  test_tint_outlives_the_program ();
+  test_tint_fades_with_the_palette ();
+  test_tint_keeps_a_ramp_distinct ();
+  test_tint_leaves_the_extremes_alone ();
+  test_replace_lands_exactly ();
+  test_replace_reaches_white_and_black ();
+  test_replace_still_fades ();
+  test_replace_flattens_a_ramp ();
+  test_recolour_is_reported ();
+  test_hue_of_rgb ();
   test_sprite_palette_reaches_the_framebuffer ();
   test_frame_size_follows_the_mode ();
   test_a_whole_frame_is_written ();

@@ -71,10 +71,15 @@ body.nodebug .panels { display: none; }
    shimmer along every vertical edge. The canvas takes an exact multiple
    and the panel sizes itself to fit, not the other way round. */
 
+/* Both set from the emulator, because neither is fixed: the width drops to
+   248px once the masked left column is cropped away, and the height follows
+   the video mode, which is 192, 224 or 240 lines. Hardcoding either scales
+   the picture by a fraction, which is the shimmer described above. */
+
 #screen {
   image-rendering: pixelated; display: block;
-  width:  calc(256px * var(--scale));
-  height: calc(192px * var(--scale));
+  width:  calc(var(--screen-w, 256px) * var(--scale));
+  height: calc(var(--screen-h, 192px) * var(--scale));
   background: #000; border: 1px solid var(--line); border-radius: 2px;
 }
 
@@ -181,9 +186,25 @@ canvas.sheet { image-rendering: pixelated; display: block; width: 100%; backgrou
 /* ── cram ────────────────────────────────────────────────────────────── */
 
 .cram { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; }
-.cram i { display: block; aspect-ratio: 1; border-radius: 1px; }
+.cram i { display: block; aspect-ratio: 1; border-radius: 1px; cursor: pointer; }
+.cram i:hover { box-shadow: 0 0 0 1.5px var(--ink); }
+/* An entry the host is recolouring. The search for which entries a sprite
+   uses is done by clicking and watching, so it has to be clear which ones
+   have already been tried. */
+.cram i.set { box-shadow: 0 0 0 1.5px var(--amber); }
 .cram-lab { font-family: var(--sans); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 9px 0 4px; }
 .cram-lab:first-of-type { margin-top: 0; }
+.cram-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 11px; font-family: var(--sans); font-size: 11px; color: var(--faint);
+}
+.cram-foot button { padding: 3px 8px; font-size: 10.5px; }
+.cram-mode { display: flex; gap: 5px; flex-shrink: 0; }
+.cram-note { font-family: var(--sans); font-size: 10.5px; line-height: 1.5; color: var(--faint); margin: 7px 0 0; }
+.cram-note b { color: var(--dim); font-weight: 600; }
+/* Reached only through a swatch. Kept rendered rather than hidden: the
+   picker has to have somewhere to anchor when it opens. */
+#cram-pick { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 
 /* ── sprites ─────────────────────────────────────────────────────────── */
 
@@ -311,6 +332,19 @@ canvas.sheet { image-rendering: pixelated; display: block; width: 100%; backgrou
         <div class="cram" id="cram0"></div>
         <p class="cram-lab">16&ndash;31 &middot; sprites &amp; backdrop</p>
         <div class="cram" id="cram1"></div>
+        <div class="cram-foot">
+          <span>Click to recolour &middot; shift-click to undo</span>
+          <span class="cram-mode">
+            <button id="cram-mode" data-on="false">tint</button>
+            <button id="cram-reset">Reset all</button>
+          </span>
+        </div>
+        <p class="cram-note"><b>tint</b> keeps the shading the game writes, so fades still
+          work &mdash; but white and black are out of reach, being the absence of a
+          colour rather than one of them. <b>replace</b> lands on the picked colour
+          exactly and reaches both, at the cost of flattening the shading.</p>
+        <!-- Opened by a swatch, never shown in place. -->
+        <input type="color" id="cram-pick">
       </div>
       <p class="off-note">Off.</p>
     </section>

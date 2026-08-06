@@ -10,6 +10,38 @@ open Uints
    conversions cost more clarity than the type safety buys. Uints appear at
    the port boundary only. *)
 
+(* The two ways of imposing a colour on an entry, which differ only in what
+   they do with the lightness the program wrote -- and that difference is the
+   whole character of each.
+
+   [Keep] is a tint. The entry takes the colour asked for and goes on using
+   its own lightness, so a four-step ramp stays four steps and a fade still
+   reaches black. What it cannot do is reach white or black, because it never
+   touches the axis those live on: asking for white gets the grey ramp that
+   sits underneath it.
+
+   [Scale] can. The lightness is multiplied by whatever factor made the entry
+   match at the moment it was picked, so it lands exactly on the colour asked
+   for -- and because it is a factor and not a value, a fade to black still
+   multiplies to black. Ask a whole ramp for white and every step clamps at
+   the top and the shading really does collapse, but that is what asking for
+   a white sprite means rather than a failure to honour it.
+
+   [Force] is the degenerate corner. An entry the program is writing as black
+   has no lightness for a factor to work from, so the value is imposed
+   outright -- and that one entry stops following fades, there being nothing
+   left to follow. *)
+type lightness =
+  | Keep
+  | Scale of float
+  | Force of float
+
+type adjust =
+  { hue : float option (* imposed; [None] keeps the written hue *)
+  ; saturation : float
+  ; lightness : lightness
+  }
+
 type t =
   { vram : Bytes.t
   ; cram : int array (* 32 entries, --BBGGRR *)
@@ -39,6 +71,11 @@ type t =
   ; (* CRAM expanded to packed 0xRRGGBB, rebuilt on every palette write so
        the per-pixel path never does the arithmetic. *)
     palette_rgb : int array (* 32, mirrors cram *)
+  ; (* Host-side recolouring, which no hardware ever did and no program can
+       see: a transform per entry, imposed on whatever the program writes
+       there. [None] leaves the entry alone, which is every entry until
+       something outside asks otherwise. See [set_tint] and [set_replace]. *)
+    recolour : adjust option array (* 32 *)
   ; (* The active display, three bytes per pixel, top row first. Sized for
        the tallest mode; frame_size says how much of it is live. *)
     framebuffer : Bytes.t
@@ -165,6 +202,113 @@ let cram_rgb entry =
   (red lsl 16) lor (green lsl 8) lor blue
 ;;
 
+(* --- recolouring ---------------------------------------------------------
+
+   A recolour has to be a function of the byte the program wrote rather than
+   a colour put in its place, because the program keeps writing. A sprite is
+   not one colour but a ramp of them -- highlight, mid, shadow -- and a game
+   walks its whole palette down to black to fade the screen out. A constant
+   substituted for an entry would flatten that ramp into a silhouette, and
+   would then sit there at full brightness while everything around it faded.
+
+   So the transform is expressed in HSL, where those two things are separable
+   from the colour itself. Hue and saturation say what colour it is;
+   lightness carries both the shading and the fade. *)
+
+let clamp01 v = if v < 0. then 0. else if v > 1. then 1. else v
+
+(* Packed [0xRRGGBB] as hue in degrees, saturation and lightness. The hue is
+   [None] for a neutral: a grey is not at some particular angle on the
+   colour circle, it is off the circle altogether, and there is no honest
+   number to hand back. *)
+let to_hsl rgb =
+  let r = float_of_int ((rgb lsr 16) land 0xFF) /. 255.
+  and g = float_of_int ((rgb lsr 8) land 0xFF) /. 255.
+  and b = float_of_int (rgb land 0xFF) /. 255. in
+  let hi = Float.max r (Float.max g b)
+  and lo = Float.min r (Float.min g b) in
+  let chroma = hi -. lo in
+  let lightness = (hi +. lo) /. 2. in
+  if chroma = 0.
+  then None, 0., lightness
+  else (
+    (* Safe: the divisor only vanishes at lightness 0 or 1, and both of those
+       force hi = lo, which is the branch above. *)
+    let saturation =
+      chroma /. (1. -. Float.abs ((2. *. lightness) -. 1.))
+    in
+    (* Whichever channel is the max pins the hue to a 120-degree span; the
+       other two place it within that span. *)
+    let h =
+      if hi = r
+      then Float.rem (((g -. b) /. chroma) +. 6.) 6.
+      else if hi = g
+      then ((b -. r) /. chroma) +. 2.
+      else ((r -. g) /. chroma) +. 4.
+    in
+    Some (h *. 60.), saturation, lightness)
+;;
+
+(* And back. Hue is only consulted through the sector it falls in, so a
+   saturation of zero makes it irrelevant rather than wrong. *)
+let of_hsl ~hue ~saturation ~lightness =
+  let lightness = clamp01 lightness
+  and saturation = clamp01 saturation in
+  let chroma =
+    (1. -. Float.abs ((2. *. lightness) -. 1.)) *. saturation
+  in
+  (* Into sixths of the circle, negatives folded back in first. *)
+  let h = Float.rem (Float.rem hue 360. +. 360.) 360. /. 60. in
+  let x = chroma *. (1. -. Float.abs (Float.rem h 2. -. 1.)) in
+  let base = lightness -. (chroma /. 2.) in
+  let r, g, b =
+    match int_of_float h with
+    | 0 -> chroma, x, 0.
+    | 1 -> x, chroma, 0.
+    | 2 -> 0., chroma, x
+    | 3 -> 0., x, chroma
+    | 4 -> x, 0., chroma
+    | _ -> chroma, 0., x
+  in
+  let byte v =
+    let n = int_of_float (Float.round ((v +. base) *. 255.)) in
+    if n < 0 then 0 else if n > 255 then 255 else n
+  in
+  (byte r lsl 16) lor (byte g lsl 8) lor byte b
+;;
+
+let hue_of_rgb rgb =
+  match to_hsl rgb with
+  | None, _, _ -> None
+  | Some h, _, _ -> Some (int_of_float (Float.round h) mod 360)
+;;
+
+let apply rgb { hue; saturation; lightness } =
+  let written_hue, _, written_lightness = to_hsl rgb in
+  let hue =
+    match hue, written_hue with
+    | Some h, _ -> h
+    | None, Some h -> h
+    | None, None -> 0. (* neutral in, neutral out: the hue is not consulted *)
+  in
+  let lightness =
+    match lightness with
+    | Keep -> written_lightness
+    | Scale k -> written_lightness *. k
+    | Force l -> l
+  in
+  of_hsl ~hue ~saturation ~lightness
+;;
+
+(* What an entry actually reaches the screen as: the colour the program
+   wrote, then the host's recolour if it has asked for one. *)
+let effective_rgb t entry =
+  let rgb = cram_rgb t.cram.(entry) in
+  match t.recolour.(entry) with
+  | None -> rgb
+  | Some adjust -> apply rgb adjust
+;;
+
 (* Power-on values, from the Mark III software reference manual. *)
 let initial_registers =
   [| 0x36 (* R0: mode *)
@@ -204,6 +348,7 @@ let create () =
   ; bg_priority = Array.make 256 false
   ; sprite_index = Array.make 256 0
   ; palette_rgb = Array.make 0x20 0 (* CRAM powers on all zero, so black *)
+  ; recolour = Array.make 0x20 None
   ; framebuffer = Bytes.make (256 * 240 * 3) '\000'
   }
 ;;
@@ -281,7 +426,7 @@ let write_data t byte =
   then (
     let entry = t.address land 0x1F in
     t.cram.(entry) <- byte;
-    t.palette_rgb.(entry) <- cram_rgb byte)
+    t.palette_rgb.(entry) <- effective_rgb t entry)
   else Bytes.set t.vram t.address (Char.chr byte);
   t.read_buffer <- byte;
   t.address <- (t.address + 1) land 0x3FFF
@@ -296,6 +441,40 @@ let read_data t =
   prefetch t;
   Uint8.of_int v
 ;;
+
+(* Recolouring is set from outside the machine, so unlike every other write
+   on this chip it does not arrive on the back of a program writing a
+   palette. The expansion is redone here rather than left for the next such
+   write, which on a paused machine might never come. *)
+let set t ~entry adjust =
+  let entry = entry land 0x1F in
+  t.recolour.(entry) <- adjust;
+  t.palette_rgb.(entry) <- effective_rgb t entry
+;;
+
+let clear_recolour t ~entry = set t ~entry None
+
+(* Hue and saturation from [rgb], the written lightness left alone. *)
+let set_tint t ~entry ~rgb =
+  let hue, saturation, _ = to_hsl rgb in
+  set t ~entry (Some { hue; saturation; lightness = Keep })
+;;
+
+(* Land on [rgb] exactly, and go on scaling with the program from there. The
+   factor is measured against what the entry is being written as right now,
+   which is what makes the entry match at the moment of asking. *)
+let set_replace t ~entry ~rgb =
+  let entry = entry land 0x1F in
+  let hue, saturation, target = to_hsl rgb in
+  let _, _, written = to_hsl (cram_rgb t.cram.(entry)) in
+  let lightness =
+    if written = 0. then Force target else Scale (target /. written)
+  in
+  set t ~entry (Some { hue; saturation; lightness })
+;;
+
+let recolour t ~entry = Option.is_some t.recolour.(entry land 0x1F)
+let palette_rgb t ~entry = t.palette_rgb.(entry land 0x1F)
 
 (* --- the scanline engine -----------------------------------------------
 
