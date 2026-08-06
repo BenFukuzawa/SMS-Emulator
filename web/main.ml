@@ -2,7 +2,8 @@
    a canvas, the keyboard, and -- when it is switched on -- a set of panels
    showing the machine's insides while it runs.
 
-   - requestAnimationFrame loop -> Machine.run_frame (the ~60 fps driver)
+   - requestAnimationFrame loop -> Machine.run_frame, paced off the clock
+     rather than off the callback (see "the clock" below)
    - framebuffer -> putImageData (RGB expanded to canvas RGBA)
    - keydown/keyup -> Joypad.button_of_char -> Machine.press/release
    - a .sms file input builds the Machine; window blur releases all keys.
@@ -569,19 +570,31 @@ let fps_acc = ref 0.
 let fps_frames = ref 0
 let fps_el = by_id "fps"
 
-let update_fps now dt =
+(* Frames the console completed, not callbacks the browser made. Those were
+   the same number back when the loop ran one frame per callback, and are
+   not now: on a 30 Hz panel the loop runs two frames a callback, and the
+   callback rate is exactly the thing this reading has to be independent of.
+   A number that said 30 while the game ran at full speed would send you
+   looking for a performance problem that is not there. *)
+let update_fps dt ~frames =
   fps_acc := !fps_acc +. dt;
-  incr fps_frames;
+  fps_frames := !fps_frames + frames;
   if !fps_acc >= 500.
   then (
     let f = float_of_int !fps_frames *. 1000. /. !fps_acc in
     let n = int_of_float (Float.round f) in
-    set_text fps_el (string_of_int (min n 60));
-    fps_el##.className
-    := Js.string (if n < 30 then "bad" else if n < 52 then "warn" else "");
+    (* Paused, the honest reading is zero, which looks like a fault rather
+       than like a machine doing what it was told. *)
+    if !running
+    then (
+      set_text fps_el (string_of_int (min n 60));
+      fps_el##.className
+      := Js.string (if n < 30 then "bad" else if n < 52 then "warn" else ""))
+    else (
+      set_text fps_el "--";
+      fps_el##.className := Js.string "");
     fps_acc := 0.;
-    fps_frames := 0);
-  ignore now
+    fps_frames := 0)
 ;;
 
 let refresh_panels m now =
@@ -727,11 +740,11 @@ let queue c samples rate =
     next_time := at +. (float_of_int n /. float_of_int rate))
 ;;
 
-(* requestAnimationFrame runs at the display's 60 Hz; the console runs at
-   59.92. So a frame's worth of samples is very slightly more than a frame's
-   worth of time, and the queue creeps forward by about a millisecond a
-   second -- a tenth of a second of lag every minute or two. Dropping a frame
-   of audio once the lead gets too big is what keeps it bounded.
+(* The loop paces the console against [performance.now]; the samples play out
+   on the audio device's own clock. Two clocks that were never going to agree
+   exactly, so the queue creeps forward or falls behind however carefully the
+   frames are timed. Dropping a frame of audio once the lead gets too big is
+   what keeps it bounded.
 
    The other direction is a stall: if the tab was in the background the clock
    has run on without us, and the cursor has to be pulled forward or
@@ -748,24 +761,82 @@ let feed_audio m =
       queue c (Machine.audio m) (Machine.audio_rate m))
 ;;
 
+(* --- the clock -----------------------------------------------------------
+
+   requestAnimationFrame fires at the display's refresh rate, which is a fact
+   about the screen and not about the Master System: 60 Hz on a laptop panel,
+   120 on a good monitor, 30 on a television that negotiated it that way.
+   Running one console frame per callback tied the game's speed to whichever
+   of those happened to be plugged in -- an HDMI cable that came up at 30 Hz
+   halved it, and the emulator was not running slowly, it was doing as it was
+   told.
+
+   So the loop paces off [performance.now] instead. Elapsed milliseconds go
+   into a backlog, whole frames come out of it, and the callback rate decides
+   only how often the picture reaches the canvas. *)
+
+(* 3.579545 MHz over 262 lines of 228 cycles apiece: 59.92 Hz, not the 60 the
+   display is probably running at. *)
+let frame_ms = 1000. /. 59.9224
+
+(* What keeps a matched 60 Hz panel steady. Its callbacks arrive 16.67 ms
+   apart and a frame wants 16.69, so on an exact comparison the backlog would
+   sink below the threshold every few hundred callbacks and the loop would run
+   no frame that time and two the next -- judder, on the one display that
+   ought to look perfect. A millisecond of slack absorbs that. What it borrows
+   stays in the backlog as a debt, so the average rate is still the
+   console's. *)
+let tolerance = 1.0
+
+(* A backgrounded tab gets no callbacks at all and comes back with seconds on
+   the clock. Those seconds are not frames anyone missed watching, and running
+   them would be a burst of fast-forward with the audio dropped out from under
+   it, so debt past this many frames is written off rather than worked off. *)
+let max_catch_up = 4
 let prev = ref 0.
+let backlog = ref 0.
+
+(* How many console frames this callback owes. Zero while paused: a paused
+   machine falls no further behind, so the backlog stays where it is and
+   resuming does not open with a catch-up burst. *)
+let frames_due dt =
+  if not !running
+  then 0
+  else (
+    backlog := !backlog +. dt;
+    let due = int_of_float ((!backlog +. tolerance) /. frame_ms) in
+    backlog
+      := (if due > max_catch_up
+          then 0.
+          else !backlog -. (float_of_int due *. frame_ms));
+    min due max_catch_up)
+;;
 
 let rec loop stamp =
   let now = Js.float_of_number stamp in
-  if !prev > 0. then update_fps now (now -. !prev);
+  let dt = if !prev > 0. then now -. !prev else 0. in
   prev := now;
-  (match !machine with
-   | Some m ->
-     if !running then Machine.run_frame m;
-     render m;
-     (* Paused, the chip generated nothing and [feed_audio] queues an empty
-        buffer -- but it still has to run, or the samples the single-step
-        buttons produce would pile up unbounded. *)
-     feed_audio m;
-     (* The whole cost of the debug view sits behind this one branch. Off,
-        the loop is exactly what it was before any of it existed. *)
-     if !debug_on then refresh_panels m now
-   | None -> ());
+  let frames =
+    match !machine with
+    | None -> 0
+    | Some m ->
+      let frames = frames_due dt in
+      for _ = 1 to frames do
+        Machine.run_frame m
+      done;
+      (* Once, after the batch. The frames in the middle of a catch-up are
+         pictures the display was never going to show. *)
+      render m;
+      (* Paused, the chip generated nothing and [feed_audio] queues an empty
+         buffer -- but it still has to run, or the samples the single-step
+         buttons produce would pile up unbounded. *)
+      feed_audio m;
+      (* The whole cost of the debug view sits behind this one branch. Off,
+         the loop is exactly what it was before any of it existed. *)
+      if !debug_on then refresh_panels m now;
+      frames
+  in
+  update_fps dt ~frames;
   ignore (Dom_html.window##requestAnimationFrame (Js.wrap_callback loop))
 ;;
 
